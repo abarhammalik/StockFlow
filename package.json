@@ -1,0 +1,27 @@
+{
+  "name": "stockflow-root",
+  "version": "1.0.0",
+  "description": "StockFlow — Modern Inventory Management Platform (MongoDB Hackathon)",
+  "private": true,
+  "scripts": {
+    "backend": "cd backend && node server.js",
+    "frontend": "cd frontend && node node_modules/vite/bin/vite.js",
+    "build": "cd frontend && npm run build",
+    "dev": "concurrently \"npm run backend\" \"npm run frontend\"",
+    "start": "node backend/server.js",
+    "seed": "npm run seed --prefix backend"
+  },
+  "keywords": [
+    "inventory",
+    "mongodb",
+    "express",
+    "react",
+    "nodejs",
+    "stockflow"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "concurrently": "^10.0.4"
+  }
+}
