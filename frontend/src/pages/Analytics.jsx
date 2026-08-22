@@ -61,38 +61,6 @@ export default function Analytics() {
 
   const BAR_COLORS = ['#6366f1', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ec4899', '#3b82f6', '#14b8a6'];
 
-  const pipelineCodeSnippets = {
-    category: `// Category Valuation & Profit Margins (Supabase / PostgreSQL)
-const { data: categories } = await supabase
-  .from('categories')
-  .select('id, name, description, products(id, quantity, price, cost_price, min_stock)')
-  .eq('owner_id', req.user.id);
-
-// Computes valuation = SUM(quantity * price), cost = SUM(quantity * cost_price)
-// and profit margin = (totalValuation - totalCost) / totalValuation * 100%`,
-    supplier: `// Supplier Portfolio Analysis (Supabase / PostgreSQL)
-const { data: suppliers } = await supabase
-  .from('suppliers')
-  .select('id, name, company, email, phone, products(id, quantity, price, min_stock)')
-  .eq('owner_id', req.user.id);
-
-// Aggregates total supplied products, total volume, and active valuation`,
-    topProducts: `// Top-Moving Products by Stock Ledger (Supabase / PostgreSQL)
-const { data: movements } = await supabase
-  .from('stock_movements')
-  .select('product_id, quantity, type, products:product_id(id, name, sku, price, quantity)')
-  .eq('owner_id', req.user.id);
-
-// Groups movements by product_id, aggregates OUT/IN quantities, and sorts top movers`,
-    lowStock: `// Low-Stock Threshold Evaluation (Supabase / PostgreSQL)
-const { data: lowStock } = await supabase
-  .from('products')
-  .select('id, name, sku, price, quantity, min_stock, unit, categories(name), suppliers(company)')
-  .eq('owner_id', req.user.id);
-
-// Filters products where quantity <= min_stock sorted by lowest stock available`,
-  };
-
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
       {/* Title Banner */}
@@ -103,13 +71,13 @@ const { data: lowStock } = await supabase
           </div>
           <div>
             <h2 className="text-xl font-bold text-slate-800 tracking-tight flex items-center gap-2">
-              Database Analytics & Insights
+              Business Intelligence & Inventory Insights
               <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 font-medium border border-emerald-200">
-                Supabase PostgreSQL
+                Live Cloud Analytics
               </span>
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Live server-side PostgreSQL metrics and aggregated portfolio data
+              Real-time portfolio metrics, turnover performance, and threshold tracking
             </p>
           </div>
         </div>
@@ -201,25 +169,89 @@ const { data: lowStock } = await supabase
 
       {/* Grid — Left Code Viewer, Right Visual Chart */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Code Snippet Box */}
+        {/* Business Insights & Metric Breakdown */}
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2">
-                <Code2 className="w-4 h-4 text-indigo-600" />
-                Supabase Query Execution
+                <BarChart3 className="w-4 h-4 text-indigo-600" />
+                Performance Insights & Breakdown
               </h3>
-              <span className="text-[10px] font-mono bg-slate-100 px-2 py-0.5 text-slate-500 border border-slate-200 rounded">
-                Node.js Client
+              <span className="text-[10px] font-semibold bg-emerald-50 text-emerald-700 px-2 py-0.5 border border-emerald-200 rounded-full">
+                Real-Time Analysis
               </span>
             </div>
 
-            <pre className="bg-slate-900 border border-slate-800 rounded-xl p-4 text-xs font-mono text-emerald-400 overflow-x-auto leading-relaxed">
-              {pipelineCodeSnippets[activeTab]}
-            </pre>
+            <div className="space-y-3 mt-4">
+              {activeTab === 'category' && (
+                <div className="space-y-2.5 text-xs">
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
+                    <span className="text-slate-600 font-medium">Categories Analyzed</span>
+                    <span className="font-bold text-slate-900">{categoryData.length} active groups</span>
+                  </div>
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
+                    <span className="text-slate-600 font-medium">Total Portfolio Valuation</span>
+                    <span className="font-bold text-indigo-600">
+                      ${categoryData.reduce((acc, c) => acc + (c.totalInventoryValue || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="p-3 bg-indigo-50/50 rounded-xl border border-indigo-100 text-slate-600 text-[11px] leading-relaxed">
+                    Category valuation aggregates total live quantities multiplied by active selling price across all assigned items.
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'supplier' && (
+                <div className="space-y-2.5 text-xs">
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
+                    <span className="text-slate-600 font-medium">Active Vendors</span>
+                    <span className="font-bold text-slate-900">{supplierData.length} suppliers</span>
+                  </div>
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
+                    <span className="text-slate-600 font-medium">Total Supply Value</span>
+                    <span className="font-bold text-indigo-600">
+                      ${supplierData.reduce((acc, s) => acc + (s.totalInventoryValue || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="p-3 bg-indigo-50/50 rounded-xl border border-indigo-100 text-slate-600 text-[11px] leading-relaxed">
+                    Supplier metrics provide instant insight into procurement volume and active vendor inventory exposure.
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'topProducts' && (
+                <div className="space-y-2.5 text-xs">
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
+                    <span className="text-slate-600 font-medium">High Velocity SKUs</span>
+                    <span className="font-bold text-slate-900">{topProducts.length} tracked items</span>
+                  </div>
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
+                    <span className="text-slate-600 font-medium">Total Volume Dispatched</span>
+                    <span className="font-bold text-indigo-600">
+                      {topProducts.reduce((acc, p) => acc + (p.totalMovedQuantity || 0), 0)} units
+                    </span>
+                  </div>
+                  <div className="p-3 bg-indigo-50/50 rounded-xl border border-indigo-100 text-slate-600 text-[11px] leading-relaxed">
+                    Stock ledger analysis identifies top turnover products to help optimize purchase reorder cycles.
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'lowStock' && (
+                <div className="space-y-2.5 text-xs">
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
+                    <span className="text-slate-600 font-medium">Critical Stock Alerts</span>
+                    <span className="font-bold text-rose-600">{lowStockData.length} items below minimum</span>
+                  </div>
+                  <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-800 text-[11px] leading-relaxed">
+                    Automated threshold monitoring alerts you when product quantities drop below defined buffer limits.
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
           <p className="text-[11px] text-slate-400 mt-4">
-            * All calculations take place natively in the cloud database and Express backend, returning computed payloads directly.
+            Aggregated intelligence updated automatically with every sale and stock transaction.
           </p>
         </div>
 

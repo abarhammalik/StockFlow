@@ -2,13 +2,26 @@ const { createClient } = require('@supabase/supabase-js');
 require('dotenv').config();
 
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 
-if (!supabaseUrl || !supabaseKey) {
+if (!supabaseUrl || !supabaseServiceKey) {
   console.warn('[Supabase] Warning: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not defined in .env.');
 }
+if (!supabaseAnonKey) {
+  console.warn('[Supabase] Warning: SUPABASE_ANON_KEY is not defined in .env. Auth email verification will not work.');
+}
 
-const supabase = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseKey || 'placeholder', {
+// Service-role client — for database CRUD operations (bypasses RLS)
+const supabase = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseServiceKey || supabaseAnonKey || 'placeholder', {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+  },
+});
+
+// Anon client — for Supabase Auth operations (signUp, signIn, resend verification)
+const supabaseAuth = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder', {
   auth: {
     persistSession: false,
     autoRefreshToken: false,
@@ -18,7 +31,8 @@ const supabase = createClient(supabaseUrl || 'https://placeholder.supabase.co', 
 let isConnected = false;
 
 const testConnection = async () => {
-  if (!supabaseUrl || !supabaseKey || supabaseUrl.includes('placeholder')) {
+  const activeKey = supabaseServiceKey || supabaseAnonKey;
+  if (!supabaseUrl || !activeKey || supabaseUrl.includes('placeholder')) {
     console.warn('[Supabase] Client initialized in mock/unconfigured mode. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env');
     isConnected = false;
     return false;
@@ -56,6 +70,7 @@ const getDBStatus = () => {
 
 module.exports = {
   supabase,
+  supabaseAuth,
   testConnection,
   getDBStatus,
 };

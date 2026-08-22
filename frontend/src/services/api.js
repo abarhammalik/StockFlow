@@ -39,6 +39,7 @@ api.interceptors.response.use(
 // Auth API
 export const signupUser = (data) => api.post('/auth/signup', data);
 export const loginUser = (data) => api.post('/auth/login', data);
+export const resendVerificationEmail = (data) => api.post('/auth/resend-verification', data);
 export const sendEmailOtp = (data) => api.post('/auth/email/send-otp', data);
 export const verifyEmailOtp = (data) => api.post('/auth/email/verify-otp', data);
 export const googleAuthUser = (data) => api.post('/auth/google', data);

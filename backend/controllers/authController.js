@@ -1,6 +1,6 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const { supabase } = require('../config/supabase');
+const { supabase, supabaseAuth } = require('../config/supabase');
 const { formatRecord } = require('../utils/supabaseHelpers');
 
 const getJwtSecret = () => {
@@ -13,8 +13,13 @@ const generateToken = (id) => {
   });
 };
 
+const getEmailRedirectUrl = () => {
+  const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+  return `${clientUrl}/login?verified=true`;
+};
+
 /**
- * @desc    Direct Email Registration (Instant Signup & Authentication)
+ * @desc    Register user via Supabase Auth (sends verification email)
  * @route   POST /api/auth/signup
  * @access  Public
  */
@@ -38,53 +43,79 @@ const signup = async (req, res, next) => {
 
     const cleanEmail = email.toLowerCase().trim();
 
-    // 1. Check if user already exists in PostgreSQL
+    // 1. Check if user already exists in PostgreSQL users table
     const { data: existingUser, error: checkErr } = await supabase
       .from('users')
-      .select('id')
+      .select('id, is_email_verified')
       .eq('email', cleanEmail)
       .maybeSingle();
 
     if (checkErr && checkErr.code !== 'PGRST116') throw checkErr;
 
     if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        message: 'An account with this email address already exists. Please sign in.',
-      });
-    }
-
-    // 2. Register user in Supabase Auth (admin or standard)
-    let supabaseUserId = null;
-    try {
-      if (supabase.auth.admin) {
-        const { data: adminData, error: adminErr } = await supabase.auth.admin.createUser({
-          email: cleanEmail,
-          password: password,
-          email_confirm: true,
-          user_metadata: { name: name.trim() },
+      if (existingUser.is_email_verified) {
+        return res.status(400).json({
+          success: false,
+          message: 'An account with this email address already exists. Please sign in.',
         });
-        if (!adminErr && adminData?.user?.id) {
-          supabaseUserId = adminData.user.id;
+      } else {
+        // User exists but never verified — resend verification
+        try {
+          await supabaseAuth.auth.resend({
+            type: 'signup',
+            email: cleanEmail,
+            options: { emailRedirectTo: getEmailRedirectUrl() },
+          });
+        } catch (e) {
+          // Ignore resend errors
         }
+        return res.status(200).json({
+          success: true,
+          requiresEmailVerification: true,
+          email: cleanEmail,
+          message: `A verification email has been sent to ${cleanEmail}. Please check your inbox and spam folder.`,
+        });
       }
-    } catch (e) {
-      // Ignore if admin API not permitted, proceed with standard insert
     }
 
-    // 3. Hash password and insert into users table
+    // 2. Register user via Supabase Auth (sends verification email automatically)
+    const { data: authData, error: authError } = await supabaseAuth.auth.signUp({
+      email: cleanEmail,
+      password: password,
+      options: {
+        data: { name: name.trim() },
+        emailRedirectTo: getEmailRedirectUrl(),
+      },
+    });
+
+    if (authError) {
+      // Handle Supabase-specific errors
+      if (authError.message?.includes('already registered')) {
+        return res.status(400).json({
+          success: false,
+          message: 'An account with this email address already exists. Please sign in.',
+        });
+      }
+      throw authError;
+    }
+
+    // 3. Hash password and insert into users table (unverified)
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
 
     const userPayload = {
       name: name.trim(),
       email: cleanEmail,
-      password_hash: passwordHash,
+      password: passwordHash,
       auth_methods: ['email'],
       avatar: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name.trim())}`,
-      is_email_verified: true,
+      is_email_verified: false,
     };
-    if (supabaseUserId) userPayload.id = supabaseUserId;
+
+    // Use Supabase Auth user ID if available
+    if (authData?.user?.id) {
+      userPayload.id = authData.user.id;
+    }
 
     let { data: newUser, error: insertErr } = await supabase
       .from('users')
@@ -104,13 +135,107 @@ const signup = async (req, res, next) => {
       newUser = retryUser;
     }
 
-    // 4. Generate JWT token
-    const token = generateToken(newUser.id);
-    const formatted = formatRecord(newUser);
-
+    // 4. Return verification-pending response (NO token issued)
     res.status(201).json({
       success: true,
-      message: 'Account created successfully! Welcome to StockFlow.',
+      requiresEmailVerification: true,
+      email: cleanEmail,
+      message: `A verification email has been sent to ${cleanEmail}. Please check your inbox and spam folder, then click the verification link to activate your account.`,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Authenticate user with Email + Password (requires verified email)
+ * @route   POST /api/auth/login
+ * @access  Public
+ */
+const login = async (req, res, next) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please enter both email address and password.',
+      });
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+
+    // 1. Authenticate via Supabase Auth
+    const { data: authData, error: authError } = await supabaseAuth.auth.signInWithPassword({
+      email: cleanEmail,
+      password: password,
+    });
+
+    if (authError) {
+      // Check if the error is due to unconfirmed email
+      if (
+        authError.message?.toLowerCase().includes('email not confirmed') ||
+        authError.message?.toLowerCase().includes('email_not_confirmed')
+      ) {
+        return res.status(403).json({
+          success: false,
+          requiresEmailVerification: true,
+          email: cleanEmail,
+          message: 'Your email address has not been verified yet. Please check your inbox for the verification link, or request a new one.',
+        });
+      }
+
+      // Generic invalid credentials
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid email or password credentials.',
+      });
+    }
+
+    // 2. Supabase Auth succeeded — look up user in PostgreSQL
+    const { data: user, error: fetchErr } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', cleanEmail)
+      .maybeSingle();
+
+    if (fetchErr) throw fetchErr;
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid email or password credentials.',
+      });
+    }
+
+    // 3. Verify password against our stored hash (belt-and-suspenders)
+    const storedHash = user.password_hash || user.password;
+    if (storedHash) {
+      const isMatch = await bcrypt.compare(password, storedHash);
+      if (!isMatch) {
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid email or password credentials.',
+        });
+      }
+    }
+
+    // 4. Mark email as verified in our DB (Supabase confirmed it)
+    if (!user.is_email_verified) {
+      await supabase
+        .from('users')
+        .update({ is_email_verified: true })
+        .eq('id', user.id);
+      user.is_email_verified = true;
+    }
+
+    // 5. Generate JWT token & return user
+    const token = generateToken(user.id);
+    const formatted = formatRecord(user);
+
+    res.json({
+      success: true,
+      message: 'Signed in successfully!',
       token,
       user: {
         _id: formatted.id,
@@ -130,75 +255,37 @@ const signup = async (req, res, next) => {
 };
 
 /**
- * @desc    Authenticate user with Email + Password
- * @route   POST /api/auth/login
+ * @desc    Resend Email Verification Link
+ * @route   POST /api/auth/resend-verification
  * @access  Public
  */
-const login = async (req, res, next) => {
+const resendVerification = async (req, res, next) => {
   try {
-    const { email, password } = req.body;
+    const { email } = req.body;
 
-    if (!email || !password) {
+    if (!email) {
       return res.status(400).json({
         success: false,
-        message: 'Please enter both email address and password.',
+        message: 'Please provide an email address.',
       });
     }
 
     const cleanEmail = email.toLowerCase().trim();
 
-    // 1. Look up user by email
-    const { data: user, error: fetchErr } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', cleanEmail)
-      .maybeSingle();
+    const { error } = await supabaseAuth.auth.resend({
+      type: 'signup',
+      email: cleanEmail,
+      options: { emailRedirectTo: getEmailRedirectUrl() },
+    });
 
-    if (fetchErr) throw fetchErr;
-
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid email or password credentials.',
-      });
+    if (error) {
+      console.warn('[Auth] Resend verification error:', error.message);
+      // Still return success to prevent email enumeration
     }
-
-    // 2. Compare password hash
-    const storedHash = user.password_hash || user.password;
-    if (!storedHash) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid email or password credentials.',
-      });
-    }
-
-    const isMatch = await bcrypt.compare(password, storedHash);
-    if (!isMatch) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid email or password credentials.',
-      });
-    }
-
-    // 3. Generate token & return user
-    const token = generateToken(user.id);
-    const formatted = formatRecord(user);
 
     res.json({
       success: true,
-      message: 'Signed in successfully!',
-      token,
-      user: {
-        _id: formatted.id,
-        id: formatted.id,
-        name: formatted.name,
-        email: formatted.email,
-        phone: formatted.phone || '',
-        avatar: formatted.avatar,
-        authMethods: ['email'],
-        isEmailVerified: true,
-        createdAt: formatted.createdAt,
-      },
+      message: `If an account exists for ${cleanEmail}, a new verification email has been sent. Please check your inbox and spam folder.`,
     });
   } catch (error) {
     next(error);
@@ -268,7 +355,9 @@ const updateProfile = async (req, res, next) => {
         email: formatted.email || '',
         phone: formatted.phone || '',
         avatar: formatted.avatar,
-        authMethods: ['email'],
+        authMethods: formatted.authMethods || ['email'],
+        isEmailVerified: Boolean(formatted.isEmailVerified ?? formatted.is_email_verified),
+        isPhoneVerified: Boolean(formatted.isPhoneVerified ?? formatted.is_phone_verified),
         createdAt: formatted.createdAt,
       },
     });
@@ -282,4 +371,5 @@ module.exports = {
   login,
   getMe,
   updateProfile,
+  resendVerification,
 };

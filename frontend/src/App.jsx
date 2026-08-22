@@ -63,11 +63,11 @@ function ApplicationLayout() {
       case '/app/stock-movements':
         return { title: 'Stock Movement Ledger', subtitle: 'Immutable transaction ledger of receipts, dispatches, and sales' };
       case '/app/analytics':
-        return { title: 'Analytics & Insights Showcase', subtitle: 'Server-side aggregation metrics and real-time query insights' };
+        return { title: 'Business Analytics & Insights', subtitle: 'Portfolio performance, turnover velocity, and threshold metrics' };
       case '/app/audit-logs':
         return { title: 'System Activity Logs', subtitle: 'Immutable trail of system operations and sales' };
       case '/app/settings':
-        return { title: 'Cloud Settings & Profile', subtitle: 'Supabase PostgreSQL configuration, security, and profile tools' };
+        return { title: 'Account Settings & Privacy', subtitle: 'Profile management, security preferences, and workspace controls' };
       default:
         return { title: 'StockFlow Cloud SaaS', subtitle: 'Inventory & Billing Platform' };
     }

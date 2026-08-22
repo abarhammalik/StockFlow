@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import {
   Package,
   Mail,
@@ -10,10 +10,13 @@ import {
   Eye,
   EyeOff,
   ShieldCheck,
-  KeyRound,
+  CheckCircle2,
+  RefreshCw,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { resendVerificationEmail } from '../services/api';
 import { showToast } from '../components/ui/ToastContainer';
+import logoImg from '../assets/logo.png';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -22,10 +25,16 @@ export default function Login() {
 
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [needsVerification, setNeedsVerification] = useState(false);
+  const [unverifiedEmail, setUnverifiedEmail] = useState('');
+  const [resending, setResending] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [verifiedBanner, setVerifiedBanner] = useState(false);
 
   const { login, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
 
   const from = location.state?.from?.pathname || '/app';
 
@@ -35,9 +44,26 @@ export default function Login() {
     }
   }, [isAuthenticated, navigate, from]);
 
+  // Check if user arrived from email verification redirect
+  useEffect(() => {
+    if (searchParams.get('verified') === 'true') {
+      setVerifiedBanner(true);
+      showToast('Email verified successfully! You can now sign in.', 'success');
+    }
+  }, [searchParams]);
+
+  // Resend cooldown timer
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setTimeout(() => setResendCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [resendCooldown]);
+
   const handleLogin = async (e) => {
     e.preventDefault();
     setErrorMessage('');
+    setNeedsVerification(false);
+
     if (!email || !password) {
       setErrorMessage('Please enter both email address and password.');
       return;
@@ -51,16 +77,30 @@ export default function Login() {
         navigate(from, { replace: true });
       }
     } catch (err) {
-      setErrorMessage(err.message || 'Invalid email or password credentials.');
+      if (err.requiresEmailVerification) {
+        setNeedsVerification(true);
+        setUnverifiedEmail(email.toLowerCase().trim());
+        setErrorMessage('');
+      } else {
+        setErrorMessage(err.message || 'Invalid email or password credentials.');
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const handleUseDemo = (demoEmail, demoPass) => {
-    setEmail(demoEmail);
-    setPassword(demoPass);
-    setErrorMessage('');
+  const handleResend = async () => {
+    if (resendCooldown > 0 || resending) return;
+    setResending(true);
+    try {
+      await resendVerificationEmail({ email: unverifiedEmail });
+      setResendCooldown(60);
+      showToast('Verification email resent! Check your inbox and spam folder.', 'success');
+    } catch (err) {
+      showToast(err.message || 'Failed to resend. Please try again.', 'error');
+    } finally {
+      setResending(false);
+    }
   };
 
   return (
@@ -70,12 +110,14 @@ export default function Login() {
 
       <div className="sm:mx-auto sm:w-full sm:max-w-md relative z-10">
         <Link to="/" className="flex items-center justify-center gap-3 group">
-          <div className="w-12 h-12 rounded-2xl bg-indigo-600 flex items-center justify-center text-white shadow-lg shadow-indigo-200 group-hover:scale-105 transition-transform duration-200">
-            <Package className="w-6 h-6" />
-          </div>
+          <img
+            src={logoImg}
+            alt="StockFlow Logo"
+            className="w-12 h-12 rounded-2xl object-contain shadow-md shadow-indigo-100 group-hover:scale-105 transition-transform duration-200"
+          />
           <div>
             <span className="text-2xl font-black text-slate-900 tracking-tight">StockFlow</span>
-            <span className="text-xs text-indigo-600 font-bold block tracking-widest uppercase">Cloud SaaS</span>
+            <span className="text-xs text-indigo-600 font-bold block tracking-widest uppercase">Inventory Workspace</span>
           </div>
         </Link>
         <h2 className="mt-6 text-center text-2xl font-extrabold text-slate-900 tracking-tight">
@@ -92,12 +134,57 @@ export default function Login() {
           {/* Security Badge */}
           <div className="flex items-center justify-between px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600">
             <span className="flex items-center gap-1.5 font-medium text-slate-700">
-              <ShieldCheck className="w-4 h-4 text-emerald-600" /> Supabase Authentication
+              <ShieldCheck className="w-4 h-4 text-emerald-600" /> Enterprise Cloud Security
             </span>
             <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
               Encrypted
             </span>
           </div>
+
+          {/* Email Verified Banner */}
+          {verifiedBanner && (
+            <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-start gap-2.5">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+              <span className="font-medium">Email verified successfully! You can now sign in with your credentials.</span>
+            </div>
+          )}
+
+          {/* Unverified Email Warning */}
+          {needsVerification && (
+            <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs space-y-3">
+              <div className="flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold">Email not verified</p>
+                  <p className="mt-1 text-amber-700">
+                    Please check your inbox for <span className="font-bold">{unverifiedEmail}</span> and click the verification link before signing in.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleResend}
+                disabled={resendCooldown > 0 || resending}
+                className="w-full py-2 px-3 rounded-xl bg-amber-100 hover:bg-amber-200 border border-amber-300 text-amber-800 font-semibold text-xs transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {resending ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Sending...</span>
+                  </>
+                ) : resendCooldown > 0 ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Resend in {resendCooldown}s</span>
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Resend Verification Email</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
 
           {/* Error Banner */}
           {errorMessage && (
@@ -167,29 +254,6 @@ export default function Login() {
                 </>
               )}
             </button>
-
-            {/* 1-Click Demo Account Autofill */}
-            <div className="pt-3 border-t border-slate-100">
-              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-2">
-                Demo Workspace Account:
-              </span>
-              <button
-                type="button"
-                onClick={() => handleUseDemo('admin@stockflow.dev', 'admin123')}
-                className="w-full p-2.5 bg-slate-50 hover:bg-indigo-50/50 border border-slate-200 hover:border-indigo-200 rounded-xl text-left flex items-center justify-between transition group"
-              >
-                <div className="flex items-center gap-2.5">
-                  <KeyRound className="w-4 h-4 text-indigo-600" />
-                  <div>
-                    <p className="text-xs font-bold text-slate-800">admin@stockflow.dev</p>
-                    <p className="text-[10px] text-slate-500 font-mono">Password: admin123</p>
-                  </div>
-                </div>
-                <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded">
-                  Autofill
-                </span>
-              </button>
-            </div>
           </form>
 
           {/* Footer Signup Link */}

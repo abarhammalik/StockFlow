@@ -4,12 +4,14 @@ import {
   Mail,
   Phone,
   ShieldCheck,
-  Compass,
-  Database,
-  Loader2,
-  Key,
-  CheckCircle2,
   Lock,
+  Save,
+  RefreshCw,
+  Server,
+  KeyRound,
+  CheckCircle2,
+  Globe,
+  Database,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { showToast } from '../components/ui/ToastContainer';
@@ -40,8 +42,8 @@ export default function Settings() {
   return (
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
       <div>
-        <h2 className="text-xl font-bold text-slate-800 tracking-tight">Account & Cloud Workspace Settings</h2>
-        <p className="text-xs text-slate-500 mt-1">Manage your profile, authentication methods, and Supabase cloud deployment</p>
+        <h2 className="text-xl font-bold text-slate-800 tracking-tight">Account & Workspace Settings</h2>
+        <p className="text-xs text-slate-500 mt-1">Manage your personal profile, workspace preferences, and security settings</p>
       </div>
 
       {/* User Profile Form */}
@@ -60,19 +62,19 @@ export default function Settings() {
               className="w-16 h-16 rounded-2xl border-2 border-indigo-100 object-cover bg-indigo-50"
             />
             <div>
-              <p className="text-xs font-semibold text-slate-700">Dynamic Profile Avatar</p>
-              <p className="text-[11px] text-slate-400">Generated securely via DiceBear initials SVG avatar service</p>
+              <p className="text-xs font-semibold text-slate-700">Workspace Profile Avatar</p>
+              <p className="text-[11px] text-slate-400">Generated automatically based on your full name initials</p>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Full Name</label>
               <input
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 transition"
                 placeholder="Your Name"
                 required
               />
@@ -84,30 +86,20 @@ export default function Settings() {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 transition"
                 placeholder="your.email@example.com"
+                required
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Phone Number (with Country Code)</label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Phone Number (Optional)</label>
               <input
                 type="tel"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 transition"
                 placeholder="+1 (555) 000-0000"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Custom Avatar URL (Optional)</label>
-              <input
-                type="url"
-                value={avatar}
-                onChange={(e) => setAvatar(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
-                placeholder="https://..."
               />
             </div>
           </div>
@@ -116,7 +108,7 @@ export default function Settings() {
             <button
               type="submit"
               disabled={saving}
-              className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-indigo-100 flex items-center gap-2"
+              className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-indigo-100 flex items-center gap-2 disabled:opacity-50"
             >
               {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
               Save Profile Changes
@@ -125,62 +117,77 @@ export default function Settings() {
         </form>
       </div>
 
-      {/* Authentication Status */}
+      {/* Account Security & Verification */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
         <h3 className="font-bold text-slate-800 text-base flex items-center gap-2">
           <ShieldCheck className="w-5 h-5 text-emerald-600" />
-          Authentication & Verification Status
+          Security & Access Status
         </h3>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
             <div>
               <p className="text-xs font-semibold text-slate-800">Email Verification</p>
-              <p className="text-[11px] text-slate-500">{user?.isEmailVerified ? 'Supabase Auth 6-Digit OTP Verified' : 'Pending Verification'}</p>
+              <p className="text-[11px] text-slate-500">{user?.isEmailVerified ? 'Account email verified & active' : 'Verification pending'}</p>
             </div>
             <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${user?.isEmailVerified ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
-              {user?.isEmailVerified ? 'Verified & Active' : 'Pending'}
+              {user?.isEmailVerified ? 'Verified' : 'Pending'}
             </span>
           </div>
 
           <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
             <div>
-              <p className="text-xs font-semibold text-slate-800">Authentication Provider</p>
-              <p className="text-[11px] text-slate-500">Supabase Auth (Email & Encrypted Password)</p>
+              <p className="text-xs font-semibold text-slate-800">Authentication Method</p>
+              <p className="text-[11px] text-slate-500">Email & Encrypted Password</p>
             </div>
             <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800">
-              Supabase Auth
+              Active
             </span>
           </div>
         </div>
 
         <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 flex items-start gap-2">
-          <Lock className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />
-          <span>All passwords and OTPs are cryptographically hashed with <code className="font-mono bg-slate-200 px-1 py-0.5 rounded">bcryptjs</code> (salt rounds: 10). Plaintext credentials are never stored.</span>
+          <Lock className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+          <span>All passwords and session tokens are encrypted with industry-standard cryptographic protection. Plaintext credentials are never accessible.</span>
         </div>
       </div>
 
-      {/* Supabase PostgreSQL Guide */}
+      {/* Cloud Workspace & Data Protection */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm">
         <h3 className="font-bold text-slate-800 text-base flex items-center gap-2">
-          <Compass className="w-5 h-5 text-emerald-600" />
-          Supabase PostgreSQL Cloud Guide
+          <Globe className="w-5 h-5 text-indigo-600" />
+          Workspace Privacy & Data Protection
         </h3>
 
-        <div className="space-y-3 text-xs leading-relaxed">
-          <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
-            <strong className="text-slate-800 block font-mono text-sm mb-1">1. Cloud PostgreSQL Connection</strong>
-            <p className="text-slate-500">Connected to Supabase Project: <code className="text-indigo-600 font-mono bg-indigo-50 px-1.5 py-0.5 rounded">https://ztlfcujtsolbbrrujauc.supabase.co</code></p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+          <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100 space-y-1">
+            <strong className="text-slate-800 font-semibold flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+              Isolated Tenant Storage
+            </strong>
+            <p className="text-slate-500 text-[11px] leading-relaxed">
+              Your inventory, sales, suppliers, and customer data are fully isolated to your private account workspace.
+            </p>
           </div>
 
-          <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
-            <strong className="text-slate-800 block font-mono text-sm mb-1">2. Verify Multi-User Data Isolation</strong>
-            <p className="text-slate-500">Every row in all tables contains <code className="text-emerald-600 font-mono bg-emerald-50 px-1.5 py-0.5 rounded">owner_id</code> that maps to the authenticated user's <code className="font-mono bg-slate-200 px-1 py-0.5 rounded">id</code>.</p>
+          <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100 space-y-1">
+            <strong className="text-slate-800 font-semibold flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+              Real-Time Stock Audit
+            </strong>
+            <p className="text-slate-500 text-[11px] leading-relaxed">
+              Automated ledger tracking records all inventory movements, sales adjustments, and purchase workflows.
+            </p>
           </div>
 
-          <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
-            <strong className="text-slate-800 block font-mono text-sm mb-1">3. Relational ACID Stock Deductions</strong>
-            <p className="text-slate-500">Every POS purchase transaction executes atomic quantity adjustments and records immutable stock movement ledger entries.</p>
+          <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100 space-y-1">
+            <strong className="text-slate-800 font-semibold flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+              Continuous Cloud Backups
+            </strong>
+            <p className="text-slate-500 text-[11px] leading-relaxed">
+              All transactions are backed by cloud infrastructure with high availability and redundancy.
+            </p>
           </div>
         </div>
       </div>

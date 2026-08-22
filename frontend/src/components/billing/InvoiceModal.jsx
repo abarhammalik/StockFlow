@@ -1,6 +1,7 @@
 import React from 'react';
 import Modal from '../ui/Modal';
-import { Printer, Heart, CheckCircle2, Store, Receipt, ShieldCheck } from 'lucide-react';
+import { Printer, Heart, CheckCircle2, Store, ShieldCheck } from 'lucide-react';
+import logoImg from '../../assets/logo.png';
 
 export default function InvoiceModal({ isOpen, onClose, sale }) {
   if (!isOpen || !sale) return null;
@@ -49,9 +50,11 @@ export default function InvoiceModal({ isOpen, onClose, sale }) {
           {/* Business & Invoice Header */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center pb-6 border-b-2 border-slate-200 gap-4">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-indigo-600 flex items-center justify-center text-white shadow-md shadow-indigo-100">
-                <Receipt className="w-6 h-6" />
-              </div>
+              <img
+                src={logoImg}
+                alt="StockFlow"
+                className="w-12 h-12 rounded-2xl object-contain shadow-md shadow-indigo-100"
+              />
               <div>
                 <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">STOCKFLOW RETAIL POS</h2>
                 <p className="text-xs text-slate-500 font-medium">Official Tax Receipt & Stock Voucher</p>
@@ -118,7 +121,7 @@ export default function InvoiceModal({ isOpen, onClose, sale }) {
                   Store Policy & Terms:
                 </p>
                 <p>• Goods once sold can be returned/exchanged within 7 days with original receipt.</p>
-                <p>• This is a computer-generated tax invoice verified by Supabase PostgreSQL.</p>
+                <p>• This is an authorized computer-generated commercial tax invoice.</p>
               </div>
 
               {/* Thank You Note */}

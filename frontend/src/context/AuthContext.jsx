@@ -42,9 +42,7 @@ export function AuthProvider({ children }) {
 
   const signup = async (name, email, password) => {
     const res = await signupUser({ name, email, password });
-    if (res.success && res.token) {
-      saveAuthData(res.token, res.user);
-    }
+    // No token is issued on signup — user must verify email first
     return res;
   };
 
@@ -59,7 +57,7 @@ export function AuthProvider({ children }) {
   const updateUser = async (profileData) => {
     const res = await updateProfileApi(profileData);
     if (res.success && res.user) {
-      setUser(res.user);
+      setUser((prev) => ({ ...prev, ...res.user }));
     }
     return res;
   };

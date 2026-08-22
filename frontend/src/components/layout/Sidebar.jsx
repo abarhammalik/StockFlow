@@ -20,6 +20,7 @@ import {
   X
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import logoImg from '../../assets/logo.png';
 
 export default function Sidebar({ isOpen, setIsOpen }) {
   const { user, logout } = useAuth();
@@ -64,9 +65,11 @@ export default function Sidebar({ isOpen, setIsOpen }) {
           {/* Brand Header */}
           <div className="h-16 flex items-center justify-between px-5 border-b border-slate-100">
             <div className="flex items-center gap-2.5">
-              <div className="p-2 bg-indigo-600 rounded-xl text-white shadow-md shadow-indigo-200">
-                <Box className="w-5 h-5" />
-              </div>
+              <img
+                src={logoImg}
+                alt="StockFlow"
+                className="w-9 h-9 rounded-xl object-contain shadow-sm"
+              />
               <div>
                 <h1 className="text-[15px] font-bold text-slate-800 tracking-tight">StockFlow</h1>
                 <p className="text-[10px] text-slate-400 font-medium">Cloud SaaS Workspace</p>
@@ -132,7 +135,7 @@ export default function Sidebar({ isOpen, setIsOpen }) {
           <div className="flex items-center justify-between px-2 text-[10px] text-slate-400">
             <span className="flex items-center gap-1 text-emerald-600 font-medium">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              Atlas Isolated
+              Cloud Connected
             </span>
             <span className="font-mono text-[9px]">v2.0 SaaS</span>
           </div>
