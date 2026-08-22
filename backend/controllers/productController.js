@@ -1,14 +1,14 @@
-const Product = require('../models/Product');
-const StockMovement = require('../models/StockMovement');
-const Category = require('../models/Category');
-const Supplier = require('../models/Supplier');
+const { supabase } = require('../config/supabase');
+const { formatProduct, formatRecord } = require('../utils/supabaseHelpers');
 
 /**
- * @desc    Get paginated & filtered products with populated references
+ * @desc    Get paginated & filtered products with populated references (Owner Scoped)
  * @route   GET /api/products
+ * @access  Private
  */
 const getProducts = async (req, res, next) => {
   try {
+    const ownerId = req.user.id || req.user._id;
     const {
       search,
       category,
@@ -19,76 +19,77 @@ const getProducts = async (req, res, next) => {
       maxPrice,
       minQty,
       maxQty,
-      sortBy = 'createdAt',
+      sortBy = 'created_at',
       sortOrder = 'desc',
       page = 1,
-      limit = 10
+      limit = 10,
     } = req.query;
 
     const pageNum = parseInt(page, 10) || 1;
     const limitNum = parseInt(limit, 10) || 10;
     const skip = (pageNum - 1) * limitNum;
 
-    // Build MongoDB query filter using query operators ($or, $regex, $gt, $gte, $lt, $lte, $expr)
-    const filter = {};
+    let query = supabase
+      .from('products')
+      .select('*, categories:category_id(id, name, description, status), suppliers:supplier_id(id, name, company, email, phone, address)', { count: 'exact' })
+      .eq('owner_id', ownerId);
 
-    // Text / Regex Search
+    // Text / ILike Search
     if (search) {
-      const searchRegex = new RegExp(search, 'i');
-      filter.$or = [
-        { name: searchRegex },
-        { sku: searchRegex },
-        { description: searchRegex }
-      ];
+      const cleanSearch = search.replace(/[%,]/g, '');
+      query = query.or(`name.ilike.%${cleanSearch}%,sku.ilike.%${cleanSearch}%,description.ilike.%${cleanSearch}%`);
     }
 
     // Category & Supplier Filters
-    if (category) filter.categoryId = category;
-    if (supplier) filter.supplierId = supplier;
-    if (status) filter.status = status;
+    if (category) query = query.eq('category_id', category);
+    if (supplier) query = query.eq('supplier_id', supplier);
+    if (status) query = query.eq('status', status);
 
     // Price Range Filters
-    if (minPrice !== undefined || maxPrice !== undefined) {
-      filter.price = {};
-      if (minPrice !== undefined) filter.price.$gte = parseFloat(minPrice);
-      if (maxPrice !== undefined) filter.price.$lte = parseFloat(maxPrice);
-    }
+    if (minPrice !== undefined && minPrice !== '') query = query.gte('price', parseFloat(minPrice));
+    if (maxPrice !== undefined && maxPrice !== '') query = query.lte('price', parseFloat(maxPrice));
 
     // Quantity Range Filters
-    if (minQty !== undefined || maxQty !== undefined) {
-      filter.quantity = {};
-      if (minQty !== undefined) filter.quantity.$gte = parseInt(minQty, 10);
-      if (maxQty !== undefined) filter.quantity.$lte = parseInt(maxQty, 10);
+    if (minQty !== undefined && minQty !== '') query = query.gte('quantity', parseInt(minQty, 10));
+    if (maxQty !== undefined && maxQty !== '') query = query.lte('quantity', parseInt(maxQty, 10));
+
+    // Stock Status
+    if (stockStatus === 'out_of_stock') {
+      query = query.eq('quantity', 0);
     }
 
-    // Dynamic Stock Status Filters ($expr evaluation)
-    if (stockStatus) {
-      if (stockStatus === 'out_of_stock') {
-        filter.quantity = 0;
-      } else if (stockStatus === 'low_stock') {
-        filter.$expr = { $and: [{ $gt: ['$quantity', 0] }, { $lte: ['$quantity', '$minStock'] }] };
-      } else if (stockStatus === 'healthy') {
-        filter.$expr = { $and: [{ $gt: ['$quantity', '$minStock'] }, { $lt: ['$quantity', '$maxStock'] }] };
-      } else if (stockStatus === 'overstocked') {
-        filter.$expr = { $gte: ['$quantity', '$maxStock'] };
-      }
+    // Sorting
+    const sortFieldMap = {
+      name: 'name',
+      sku: 'sku',
+      price: 'price',
+      quantity: 'quantity',
+      createdAt: 'created_at',
+      updatedAt: 'updated_at',
+      created_at: 'created_at',
+      updated_at: 'updated_at',
+    };
+    const dbSortField = sortFieldMap[sortBy] || 'created_at';
+    query = query.order(dbSortField, { ascending: sortOrder.toLowerCase() === 'asc' });
+
+    // Pagination
+    query = query.range(skip, skip + limitNum - 1);
+
+    const { data: rawProducts, count, error } = await query;
+    if (error) throw error;
+
+    let products = (rawProducts || []).map(formatProduct);
+
+    // In-memory filter for complex relational/calculated stockStatus if needed
+    if (stockStatus === 'low_stock') {
+      products = products.filter((p) => p.quantity > 0 && p.quantity <= p.minStock);
+    } else if (stockStatus === 'overstocked') {
+      products = products.filter((p) => p.maxStock > 0 && p.quantity >= p.maxStock);
+    } else if (stockStatus === 'healthy') {
+      products = products.filter((p) => p.quantity > p.minStock && (p.maxStock === 0 || p.quantity < p.maxStock));
     }
 
-    // Sort options
-    const sort = {};
-    const validSortFields = ['name', 'sku', 'price', 'quantity', 'createdAt', 'updatedAt'];
-    const field = validSortFields.includes(sortBy) ? sortBy : 'createdAt';
-    sort[field] = sortOrder === 'asc' ? 1 : -1;
-
-    // Query Execution with Population, Skip, Limit
-    const products = await Product.find(filter)
-      .populate('categoryId', 'name description status')
-      .populate('supplierId', 'name company email phone')
-      .sort(sort)
-      .skip(skip)
-      .limit(limitNum);
-
-    const total = await Product.countDocuments(filter);
+    const total = count !== null ? count : products.length;
 
     res.json({
       success: true,
@@ -97,8 +98,8 @@ const getProducts = async (req, res, next) => {
         total,
         page: pageNum,
         limit: limitNum,
-        pages: Math.ceil(total / limitNum) || 1
-      }
+        pages: Math.ceil(total / limitNum) || 1,
+      },
     });
   } catch (error) {
     next(error);
@@ -106,30 +107,44 @@ const getProducts = async (req, res, next) => {
 };
 
 /**
- * @desc    Get single product by ID with history & references
+ * @desc    Get single product by ID with history & references (Owner Scoped)
  * @route   GET /api/products/:id
+ * @access  Private
  */
 const getProductById = async (req, res, next) => {
   try {
-    const product = await Product.findById(req.params.id)
-      .populate('categoryId', 'name description status')
-      .populate('supplierId', 'name company email phone address');
+    const ownerId = req.user.id || req.user._id;
 
+    const { data: product, error: fetchErr } = await supabase
+      .from('products')
+      .select('*, categories:category_id(id, name, description, status), suppliers:supplier_id(id, name, company, email, phone, address)')
+      .eq('id', req.params.id)
+      .eq('owner_id', ownerId)
+      .maybeSingle();
+
+    if (fetchErr) throw fetchErr;
     if (!product) {
-      return res.status(404).json({ success: false, message: 'Product not found' });
+      return res.status(404).json({ success: false, message: 'Product not found or access denied.' });
     }
 
-    // Fetch related stock movement ledger entries
-    const movements = await StockMovement.find({ productId: product._id })
-      .sort({ createdAt: -1 })
+    // Fetch related stock movement ledger entries (Owner Scoped)
+    const { data: rawMovements } = await supabase
+      .from('stock_movements')
+      .select('*')
+      .eq('product_id', req.params.id)
+      .eq('owner_id', ownerId)
+      .order('created_at', { ascending: false })
       .limit(20);
+
+    const formattedProduct = formatProduct(product);
+    const movements = (rawMovements || []).map(formatRecord);
 
     res.json({
       success: true,
       data: {
-        ...product.toObject(),
-        movements
-      }
+        ...formattedProduct,
+        movements,
+      },
     });
   } catch (error) {
     next(error);
@@ -137,66 +152,112 @@ const getProductById = async (req, res, next) => {
 };
 
 /**
- * @desc    Create new product
+ * @desc    Create new product (Owner Scoped)
  * @route   POST /api/products
+ * @access  Private
  */
 const createProduct = async (req, res, next) => {
   try {
-    const { name, sku, description, categoryId, supplierId, price, costPrice, quantity = 0, minStock = 5, maxStock = 100, unit = 'pcs', status = 'active' } = req.body;
-
-    // Check category & supplier existence
-    const categoryExists = await Category.findById(categoryId);
-    if (!categoryExists) {
-      return res.status(400).json({ success: false, message: 'Specified Category does not exist' });
-    }
-
-    const supplierExists = await Supplier.findById(supplierId);
-    if (!supplierExists) {
-      return res.status(400).json({ success: false, message: 'Specified Supplier does not exist' });
-    }
-
-    // Check SKU uniqueness
-    const skuExists = await Product.findOne({ sku: sku.toUpperCase() });
-    if (skuExists) {
-      return res.status(400).json({ success: false, message: 'A product with this SKU already exists' });
-    }
-
-    const product = await Product.create({
+    const ownerId = req.user.id || req.user._id;
+    const {
       name,
-      sku: sku.toUpperCase(),
+      sku,
       description,
       categoryId,
       supplierId,
       price,
       costPrice,
-      quantity,
-      minStock,
-      maxStock,
-      unit,
-      status
-    });
+      quantity = 0,
+      minStock = 5,
+      maxStock = 100,
+      unit = 'pcs',
+      status = 'active',
+    } = req.body;
+
+    if (!name || !sku || price === undefined || costPrice === undefined) {
+      return res.status(400).json({ success: false, message: 'Product name, SKU, price, and cost price are required' });
+    }
+
+    // Verify Category belongs to authenticated user if provided
+    if (categoryId) {
+      const { data: categoryExists } = await supabase
+        .from('categories')
+        .select('id')
+        .eq('id', categoryId)
+        .eq('owner_id', ownerId)
+        .maybeSingle();
+
+      if (!categoryExists) {
+        return res.status(400).json({ success: false, message: 'Specified Category does not exist in your workspace' });
+      }
+    }
+
+    // Verify Supplier belongs to authenticated user if provided
+    if (supplierId) {
+      const { data: supplierExists } = await supabase
+        .from('suppliers')
+        .select('id')
+        .eq('id', supplierId)
+        .eq('owner_id', ownerId)
+        .maybeSingle();
+
+      if (!supplierExists) {
+        return res.status(400).json({ success: false, message: 'Specified Supplier does not exist in your workspace' });
+      }
+    }
+
+    // Check SKU uniqueness within THIS user's inventory workspace
+    const { data: skuExists } = await supabase
+      .from('products')
+      .select('id')
+      .eq('owner_id', ownerId)
+      .eq('sku', sku.toUpperCase().trim())
+      .maybeSingle();
+
+    if (skuExists) {
+      return res.status(400).json({ success: false, message: 'A product with this SKU already exists in your inventory' });
+    }
+
+    const { data: product, error: insertErr } = await supabase
+      .from('products')
+      .insert({
+        owner_id: ownerId,
+        name: name.trim(),
+        sku: sku.toUpperCase().trim(),
+        description: description || '',
+        category_id: categoryId || null,
+        supplier_id: supplierId || null,
+        price: parseFloat(price),
+        cost_price: parseFloat(costPrice),
+        quantity: parseInt(quantity, 10) || 0,
+        min_stock: parseInt(minStock, 10) || 5,
+        max_stock: parseInt(maxStock, 10) || 100,
+        unit: unit || 'pcs',
+        status: status || 'active',
+      })
+      .select('*, categories:category_id(id, name), suppliers:supplier_id(id, company)')
+      .single();
+
+    if (insertErr) throw insertErr;
 
     // Auto-create initial stock movement if quantity > 0
     if (quantity > 0) {
-      await StockMovement.create({
-        productId: product._id,
+      await supabase.from('stock_movements').insert({
+        owner_id: ownerId,
+        product_id: product.id,
         type: 'IN',
-        quantity,
-        previousStock: 0,
-        newStock: quantity,
+        quantity: parseInt(quantity, 10),
+        previous_stock: 0,
+        new_stock: parseInt(quantity, 10),
         reason: 'Initial Product Stock Creation',
-        reference: `INIT-${product.sku}`
+        reference: `INIT-${product.sku}`,
       });
     }
-
-    const populatedProduct = await Product.findById(product._id)
-      .populate('categoryId', 'name')
-      .populate('supplierId', 'company');
 
     res.status(201).json({
       success: true,
       message: 'Product created successfully',
-      data: populatedProduct
+      data: formatProduct(product),
     });
   } catch (error) {
     next(error);
@@ -204,50 +265,91 @@ const createProduct = async (req, res, next) => {
 };
 
 /**
- * @desc    Update product details
+ * @desc    Update product details (Owner Scoped)
  * @route   PUT /api/products/:id
+ * @access  Private
  */
 const updateProduct = async (req, res, next) => {
   try {
-    let product = await Product.findById(req.params.id);
+    const ownerId = req.user.id || req.user._id;
+
+    const { data: product, error: fetchErr } = await supabase
+      .from('products')
+      .select('*')
+      .eq('id', req.params.id)
+      .eq('owner_id', ownerId)
+      .maybeSingle();
+
+    if (fetchErr) throw fetchErr;
     if (!product) {
-      return res.status(404).json({ success: false, message: 'Product not found' });
+      return res.status(404).json({ success: false, message: 'Product not found or access denied' });
     }
 
-    const { sku, categoryId, supplierId } = req.body;
+    const { sku, categoryId, supplierId, name, description, price, costPrice, quantity, minStock, maxStock, unit, status } = req.body;
 
-    if (sku && sku.toUpperCase() !== product.sku) {
-      const skuCheck = await Product.findOne({ sku: sku.toUpperCase() });
-      if (skuCheck) {
-        return res.status(400).json({ success: false, message: 'SKU already in use by another product' });
+    if (sku && sku.toUpperCase().trim() !== product.sku) {
+      const { data: skuCheck } = await supabase
+        .from('products')
+        .select('id')
+        .eq('owner_id', ownerId)
+        .eq('sku', sku.toUpperCase().trim())
+        .maybeSingle();
+
+      if (skuCheck && skuCheck.id !== product.id) {
+        return res.status(400).json({ success: false, message: 'SKU already in use by another product in your inventory' });
       }
     }
 
     if (categoryId) {
-      const catExists = await Category.findById(categoryId);
-      if (!catExists) return res.status(400).json({ success: false, message: 'Invalid Category ID' });
+      const { data: catExists } = await supabase
+        .from('categories')
+        .select('id')
+        .eq('id', categoryId)
+        .eq('owner_id', ownerId)
+        .maybeSingle();
+
+      if (!catExists) return res.status(400).json({ success: false, message: 'Invalid Category ID for your workspace' });
     }
 
     if (supplierId) {
-      const supExists = await Supplier.findById(supplierId);
-      if (!supExists) return res.status(400).json({ success: false, message: 'Invalid Supplier ID' });
+      const { data: supExists } = await supabase
+        .from('suppliers')
+        .select('id')
+        .eq('id', supplierId)
+        .eq('owner_id', ownerId)
+        .maybeSingle();
+
+      if (!supExists) return res.status(400).json({ success: false, message: 'Invalid Supplier ID for your workspace' });
     }
 
-    // Preserve stock quantity changes through stock movement API instead of direct overwrite where possible
-    const updatedData = { ...req.body };
-    if (sku) updatedData.sku = sku.toUpperCase();
+    const updates = {};
+    if (name !== undefined) updates.name = name.trim();
+    if (sku !== undefined) updates.sku = sku.toUpperCase().trim();
+    if (description !== undefined) updates.description = description;
+    if (categoryId !== undefined) updates.category_id = categoryId || null;
+    if (supplierId !== undefined) updates.supplier_id = supplierId || null;
+    if (price !== undefined) updates.price = parseFloat(price);
+    if (costPrice !== undefined) updates.cost_price = parseFloat(costPrice);
+    if (quantity !== undefined) updates.quantity = parseInt(quantity, 10);
+    if (minStock !== undefined) updates.min_stock = parseInt(minStock, 10);
+    if (maxStock !== undefined) updates.max_stock = parseInt(maxStock, 10);
+    if (unit !== undefined) updates.unit = unit;
+    if (status !== undefined) updates.status = status;
 
-    const updatedProduct = await Product.findByIdAndUpdate(req.params.id, updatedData, {
-      new: true,
-      runValidators: true
-    })
-      .populate('categoryId', 'name')
-      .populate('supplierId', 'company');
+    const { data: updatedProduct, error: updateErr } = await supabase
+      .from('products')
+      .update(updates)
+      .eq('id', req.params.id)
+      .eq('owner_id', ownerId)
+      .select('*, categories:category_id(id, name), suppliers:supplier_id(id, company)')
+      .single();
+
+    if (updateErr) throw updateErr;
 
     res.json({
       success: true,
       message: 'Product updated successfully',
-      data: updatedProduct
+      data: formatProduct(updatedProduct),
     });
   } catch (error) {
     next(error);
@@ -255,22 +357,32 @@ const updateProduct = async (req, res, next) => {
 };
 
 /**
- * @desc    Delete product & associated movements
+ * @desc    Delete product & associated movements (Owner Scoped)
  * @route   DELETE /api/products/:id
+ * @access  Private
  */
 const deleteProduct = async (req, res, next) => {
   try {
-    const product = await Product.findById(req.params.id);
+    const ownerId = req.user.id || req.user._id;
+
+    const { data: product } = await supabase
+      .from('products')
+      .select('id')
+      .eq('id', req.params.id)
+      .eq('owner_id', ownerId)
+      .maybeSingle();
+
     if (!product) {
-      return res.status(404).json({ success: false, message: 'Product not found' });
+      return res.status(404).json({ success: false, message: 'Product not found or access denied' });
     }
 
-    await StockMovement.deleteMany({ productId: product._id });
-    await Product.findByIdAndDelete(req.params.id);
+    await supabase.from('stock_movements').delete().eq('product_id', req.params.id).eq('owner_id', ownerId);
+    const { error } = await supabase.from('products').delete().eq('id', req.params.id).eq('owner_id', ownerId);
+    if (error) throw error;
 
     res.json({
       success: true,
-      message: 'Product and associated stock movements deleted successfully'
+      message: 'Product and associated stock movements deleted successfully',
     });
   } catch (error) {
     next(error);
@@ -282,5 +394,5 @@ module.exports = {
   getProductById,
   createProduct,
   updateProduct,
-  deleteProduct
+  deleteProduct,
 };

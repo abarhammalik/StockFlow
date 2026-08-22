@@ -56,7 +56,7 @@ export default function Categories() {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-slate-800 tracking-tight">Product Categories</h2>
-          <p className="text-xs text-slate-400">Organize stock catalog with aggregated MongoDB analytics</p>
+          <p className="text-xs text-slate-400">Organize stock catalog with aggregated real-time analytics</p>
         </div>
 
         <button

@@ -6,10 +6,11 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 require('dotenv').config();
 
-const { connectDB } = require('./config/db');
+const { testConnection } = require('./config/supabase');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
 
 // Route Handlers
+const authRoutes = require('./routes/authRoutes');
 const healthRoutes = require('./routes/healthRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const supplierRoutes = require('./routes/supplierRoutes');
@@ -53,13 +54,14 @@ const PORT = process.env.PORT || 5000;
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({
   origin: process.env.CLIENT_URL || 'http://localhost:5173',
-  credentials: true
+  credentials: true,
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
 
 // Mount REST API Routes
+app.use('/api/auth', authRoutes);
 app.use('/api', healthRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/suppliers', supplierRoutes);
@@ -89,10 +91,11 @@ if (fs.existsSync(frontendDistPath)) {
   // Root Welcome Endpoint (Fallback when frontend is not built)
   app.get('/', (req, res) => {
     res.json({
-      name: 'StockFlow Master API',
+      name: 'StockFlow Master API (Powered by Supabase & PostgreSQL)',
       status: 'online',
       webSockets: 'enabled',
       endpoints: {
+        auth: '/api/auth',
         health: '/api/health',
         products: '/api/products',
         categories: '/api/categories',
@@ -100,8 +103,8 @@ if (fs.existsSync(frontendDistPath)) {
         stockMovements: '/api/stock-movements',
         customers: '/api/customers',
         sales: '/api/sales',
-        analytics: '/api/analytics/dashboard'
-      }
+        analytics: '/api/analytics/dashboard',
+      },
     });
   });
 }
@@ -110,13 +113,13 @@ if (fs.existsSync(frontendDistPath)) {
 app.use(notFound);
 app.use(errorHandler);
 
-// Connect Local MongoDB & Launch Server
-connectDB().then(() => {
+// Test Supabase connectivity and start listening
+testConnection().then(() => {
   server.listen(PORT, () => {
     console.log(`=================================================`);
     console.log(`  StockFlow API & WebSocket Server on port ${PORT}`);
     console.log(`  Health Check: http://localhost:${PORT}/api/health`);
-    console.log(`  Target DB: mongodb://127.0.0.1:27017/stockflow`);
+    console.log(`  Target DB: ${process.env.SUPABASE_URL || 'Supabase (PostgreSQL)'}`);
     console.log(`=================================================`);
   });
 });

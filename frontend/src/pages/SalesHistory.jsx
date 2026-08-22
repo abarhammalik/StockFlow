@@ -62,7 +62,7 @@ export default function SalesHistory() {
   };
 
   const handleRefund = async (sale) => {
-    if (!window.confirm(`Are you sure you want to refund Invoice #${sale.invoiceNumber}? Product stock will be automatically restored to MongoDB.`)) return;
+    if (!window.confirm(`Are you sure you want to refund Invoice #${sale.invoiceNumber}? Product stock will be automatically restored to database.`)) return;
 
     setRefundingId(sale._id);
     try {

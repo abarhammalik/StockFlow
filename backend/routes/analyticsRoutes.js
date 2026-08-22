@@ -9,6 +9,9 @@ const {
   getMovementAnalytics,
   getSalesAnalytics,
 } = require('../controllers/analyticsController');
+const { protect } = require('../middleware/auth');
+
+router.use(protect);
 
 router.get('/dashboard', getDashboardSummary);
 router.get('/categories', getCategoryAnalytics);

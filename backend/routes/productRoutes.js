@@ -8,6 +8,9 @@ const {
   deleteProduct
 } = require('../controllers/productController');
 const { validateObjectId, validateProductInput } = require('../middleware/validation');
+const { protect } = require('../middleware/auth');
+
+router.use(protect);
 
 router.route('/')
   .get(getProducts)

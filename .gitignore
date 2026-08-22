@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Environment Variables (Never commit secrets!)
+.env
+.env.*
+!.env.example
+backend/.env
+**/backend/.env
+
+# Build outputs
+dist/
+**/dist/
+build/
+**/build/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS & Temp files
+.DS_Store
+Thumbs.db
+New folder (2)/
+*.zip
+*.rar

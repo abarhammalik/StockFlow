@@ -89,7 +89,7 @@ export default function PurchaseOrders() {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-slate-800 tracking-tight">Supplier Purchase Orders (PO)</h2>
-          <p className="text-xs text-slate-400">Create purchase orders for vendors and auto-restock MongoDB inventory on receipt</p>
+          <p className="text-xs text-slate-400">Create purchase orders for vendors and auto-restock catalog inventory on receipt</p>
         </div>
 
         <button

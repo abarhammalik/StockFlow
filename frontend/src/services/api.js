@@ -8,17 +8,44 @@ const api = axios.create({
   timeout: 15000,
 });
 
+// Attach Authorization Bearer token to all outgoing requests automatically
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('stockflow_token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
 api.interceptors.response.use(
   (response) => response.data,
   (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('stockflow_token');
+    }
     const customError = {
       message: error.response?.data?.message || error.message || 'An unexpected server error occurred',
       status: error.response?.status || 500,
       details: error.response?.data?.errors || null,
+      requiresEmailVerification: error.response?.data?.requiresEmailVerification || false,
     };
     return Promise.reject(customError);
   }
 );
+
+// Auth API
+export const signupUser = (data) => api.post('/auth/signup', data);
+export const loginUser = (data) => api.post('/auth/login', data);
+export const sendEmailOtp = (data) => api.post('/auth/email/send-otp', data);
+export const verifyEmailOtp = (data) => api.post('/auth/email/verify-otp', data);
+export const googleAuthUser = (data) => api.post('/auth/google', data);
+export const sendPhoneOtp = (data) => api.post('/auth/phone/send-otp', data);
+export const verifyPhoneOtp = (data) => api.post('/auth/phone/verify-otp', data);
+export const getMe = () => api.get('/auth/me');
+export const updateProfile = (data) => api.put('/auth/profile', data);
 
 // Health
 export const checkHealth = () => api.get('/health');

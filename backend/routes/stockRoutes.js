@@ -6,6 +6,9 @@ const {
   getProductMovements
 } = require('../controllers/stockController');
 const { validateObjectId, validateStockMovementInput } = require('../middleware/validation');
+const { protect } = require('../middleware/auth');
+
+router.use(protect);
 
 router.route('/')
   .get(getStockMovements)

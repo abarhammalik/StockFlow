@@ -1,6 +1,6 @@
 import React from 'react';
 import Modal from '../ui/Modal';
-import { Printer, Heart, CheckCircle2, Store, Phone, Mail, FileText, Sparkles, ShieldCheck } from 'lucide-react';
+import { Printer, Heart, CheckCircle2, Store, Receipt, ShieldCheck } from 'lucide-react';
 
 export default function InvoiceModal({ isOpen, onClose, sale }) {
   if (!isOpen || !sale) return null;
@@ -29,7 +29,7 @@ export default function InvoiceModal({ isOpen, onClose, sale }) {
                   Thank You for Your Purchase! 🎉
                 </h3>
                 <p className="text-xs text-emerald-100 mt-0.5 font-medium">
-                  Your order has been processed. Stock levels updated live in MongoDB.
+                  Your order has been processed. Stock levels updated live in database.
                 </p>
               </div>
             </div>
@@ -44,79 +44,72 @@ export default function InvoiceModal({ isOpen, onClose, sale }) {
           </div>
         </div>
 
-        {/* Printable Tax Bill Document Card */}
-        <div id="printable-bill" className="bg-white border-2 border-slate-200 rounded-2xl p-6 sm:p-8 shadow-sm space-y-6 print:border-none print:shadow-none print:p-0">
-          
-          {/* Store Logo & Invoice Header */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b-2 border-slate-200 pb-6 gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <div className="p-2 bg-indigo-600 text-white rounded-xl font-bold">
-                  <Store className="w-5 h-5" />
-                </div>
-                <h2 className="text-2xl font-extrabold text-slate-800 tracking-tight">StockFlow Retail Store</h2>
+        {/* Printable Official Invoice Card */}
+        <div id="printable-invoice" className="bg-white border-2 border-slate-200 rounded-2xl p-6 sm:p-8 space-y-6 shadow-sm">
+          {/* Business & Invoice Header */}
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center pb-6 border-b-2 border-slate-200 gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-indigo-600 flex items-center justify-center text-white shadow-md shadow-indigo-100">
+                <Receipt className="w-6 h-6" />
               </div>
-              <p className="text-xs text-slate-500 mt-1 font-medium">128 Technology Park, Innovation Suite #402</p>
-              <p className="text-[11px] text-slate-400 font-mono">GSTIN / TAX ID: 27AAAAA0000A1Z5 | Support: (800) 555-STOCK</p>
+              <div>
+                <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">STOCKFLOW RETAIL POS</h2>
+                <p className="text-xs text-slate-500 font-medium">Official Tax Receipt & Stock Voucher</p>
+              </div>
             </div>
 
-            <div className="sm:text-right space-y-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block font-mono">RETAIL TAX INVOICE</span>
-              <div className="inline-block px-3 py-1 bg-indigo-50 text-indigo-700 font-extrabold font-mono text-sm rounded-lg border border-indigo-200">
-                {sale.invoiceNumber}
-              </div>
-              <p className="text-slate-500 font-mono text-xs mt-1">{formattedDate}</p>
+            <div className="text-right font-mono sm:text-right">
+              <span className="text-xs font-bold text-indigo-600 block">{sale.invoiceNumber}</span>
+              <span className="text-[11px] text-slate-400">{formattedDate}</span>
             </div>
           </div>
 
-          {/* Customer Billed-To Box & Payment Status Badge */}
-          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-            <div>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block font-mono">Billed To Customer</span>
-              <h4 className="font-extrabold text-slate-800 text-sm mt-0.5">{sale.customerName}</h4>
-              <p className="text-slate-600 font-mono mt-0.5">Mobile: {sale.customerPhone}</p>
-              {sale.customerEmail && <p className="text-slate-500">{sale.customerEmail}</p>}
+          {/* Customer & Payment Meta Details */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs">
+            <div className="space-y-1">
+              <span className="text-slate-400 font-semibold uppercase tracking-wider text-[10px] block">Customer Details:</span>
+              <p className="font-bold text-slate-800 text-sm">{sale.customerName}</p>
+              <p className="text-slate-600 font-mono">Phone: {sale.customerPhone}</p>
+              {sale.customerEmail && <p className="text-slate-500">Email: {sale.customerEmail}</p>}
             </div>
 
-            <div className="sm:text-right space-y-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block font-mono">Payment Status</span>
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-100 text-emerald-800 font-bold rounded-lg border border-emerald-200 text-xs">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                <span>{sale.paymentMethod} — PAID & VERIFIED</span>
-              </div>
-              <p className="text-[11px] text-slate-400 font-mono">Transaction ID: TXN-{sale.invoiceNumber.replace('INV-', '')}</p>
+            <div className="space-y-1 sm:text-right">
+              <span className="text-slate-400 font-semibold uppercase tracking-wider text-[10px] block">Payment Summary:</span>
+              <p className="font-bold text-slate-800">Method: {sale.paymentMethod}</p>
+              <p className="font-semibold text-emerald-600">Status: {sale.paymentStatus}</p>
+              {sale.notes && <p className="text-slate-500 italic">Notes: {sale.notes}</p>}
             </div>
           </div>
 
-          {/* Itemized Table */}
+          {/* Line Items Table */}
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
+            <table className="w-full text-left text-xs border-collapse">
               <thead>
-                <tr className="bg-slate-100 border-b-2 border-slate-200 text-[11px] font-bold text-slate-700 uppercase tracking-wider font-mono">
-                  <th className="py-3 px-3">#</th>
-                  <th className="py-3 px-3">Item Description</th>
-                  <th className="py-3 px-3">SKU</th>
-                  <th className="py-3 px-3 text-right">Unit Price</th>
-                  <th className="py-3 px-3 text-right">Qty</th>
-                  <th className="py-3 px-3 text-right">Total Amount</th>
+                <tr className="border-b-2 border-slate-200 text-slate-500 uppercase tracking-wider font-mono text-[10px]">
+                  <th className="py-2.5 px-2">#</th>
+                  <th className="py-2.5 px-2">Item Description</th>
+                  <th className="py-2.5 px-2">SKU</th>
+                  <th className="py-2.5 px-2 text-right">Price</th>
+                  <th className="py-2.5 px-2 text-center">Qty</th>
+                  <th className="py-2.5 px-2 text-right">Amount</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
-                {sale.items.map((item, idx) => (
-                  <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
-                    <td className="py-3 px-3 font-mono text-slate-400">{idx + 1}</td>
-                    <td className="py-3 px-3 font-bold text-slate-800">{item.name}</td>
-                    <td className="py-3 px-3 font-mono text-indigo-600 font-semibold">{item.sku}</td>
-                    <td className="py-3 px-3 text-right font-mono text-slate-600">₹{item.price.toFixed(2)}</td>
-                    <td className="py-3 px-3 text-right font-mono font-bold text-slate-800">{item.quantity}</td>
-                    <td className="py-3 px-3 text-right font-mono font-bold text-slate-800">₹{item.subtotal.toFixed(2)}</td>
+              <tbody className="divide-y divide-slate-100 font-mono">
+                {(sale.items || []).map((item, idx) => (
+                  <tr key={idx} className="hover:bg-slate-50">
+                    <td className="py-2.5 px-2 text-slate-400">{idx + 1}</td>
+                    <td className="py-2.5 px-2 font-sans font-semibold text-slate-800">{item.name}</td>
+                    <td className="py-2.5 px-2 text-slate-500 text-[11px]">{item.sku}</td>
+                    <td className="py-2.5 px-2 text-right text-slate-600">₹{(Number(item.price) || 0).toFixed(2)}</td>
+                    <td className="py-2.5 px-2 text-center font-bold text-slate-800">{item.quantity}</td>
+                    <td className="py-2.5 px-2 text-right font-bold text-slate-900">₹{(Number(item.subtotal) || 0).toFixed(2)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
 
-          {/* Summary Calculation Box */}
+          {/* Calculation Breakdown & Total */}
           <div className="border-t-2 border-slate-200 pt-4 flex flex-col sm:flex-row justify-between items-start sm:items-end gap-6">
             <div className="space-y-2 text-[11px] text-slate-500 max-w-sm">
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
@@ -125,7 +118,7 @@ export default function InvoiceModal({ isOpen, onClose, sale }) {
                   Store Policy & Terms:
                 </p>
                 <p>• Goods once sold can be returned/exchanged within 7 days with original receipt.</p>
-                <p>• This is a computer-generated tax invoice verified by MongoDB database.</p>
+                <p>• This is a computer-generated tax invoice verified by Supabase PostgreSQL.</p>
               </div>
 
               {/* Thank You Note */}
@@ -137,23 +130,23 @@ export default function InvoiceModal({ isOpen, onClose, sale }) {
             <div className="w-full sm:w-72 bg-slate-50 border-2 border-slate-200 rounded-xl p-4 space-y-2 text-xs font-mono">
               <div className="flex justify-between text-slate-600">
                 <span>Cart Subtotal:</span>
-                <span>₹{sale.subtotal.toFixed(2)}</span>
+                <span>₹{(Number(sale.subtotal) || 0).toFixed(2)}</span>
               </div>
-              {sale.discountAmount > 0 && (
+              {Number(sale.discountAmount) > 0 && (
                 <div className="flex justify-between text-emerald-600 font-semibold">
                   <span>Discount ({sale.discountRate}%):</span>
-                  <span>-₹{sale.discountAmount.toFixed(2)}</span>
+                  <span>-₹{(Number(sale.discountAmount) || 0).toFixed(2)}</span>
                 </div>
               )}
-              {sale.taxAmount > 0 && (
+              {Number(sale.taxAmount) > 0 && (
                 <div className="flex justify-between text-slate-600">
                   <span>Estimated Tax ({sale.taxRate}%):</span>
-                  <span>+₹{sale.taxAmount.toFixed(2)}</span>
+                  <span>+₹{(Number(sale.taxAmount) || 0).toFixed(2)}</span>
                 </div>
               )}
               <div className="flex justify-between text-base font-extrabold text-slate-900 pt-2 border-t-2 border-slate-300">
                 <span>Grand Total:</span>
-                <span className="text-indigo-600">₹{sale.grandTotal.toFixed(2)}</span>
+                <span className="text-indigo-600">₹{(Number(sale.grandTotal) || 0).toFixed(2)}</span>
               </div>
             </div>
           </div>
@@ -165,7 +158,6 @@ export default function InvoiceModal({ isOpen, onClose, sale }) {
             </div>
             <p className="text-[10px] text-slate-400">*{sale.invoiceNumber}*</p>
           </div>
-
         </div>
 
         {/* Modal Buttons */}

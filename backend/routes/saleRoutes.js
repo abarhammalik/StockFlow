@@ -8,6 +8,9 @@ const {
   getSaleById,
 } = require('../controllers/saleController');
 const { validateObjectId } = require('../middleware/validation');
+const { protect } = require('../middleware/auth');
+
+router.use(protect);
 
 router.get('/global-search', globalSearch);
 router.get('/', getSales);

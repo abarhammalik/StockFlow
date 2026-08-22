@@ -44,7 +44,7 @@ export default function SalesAnalytics() {
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
       <div>
         <h2 className="text-xl font-bold text-slate-800 tracking-tight">Sales & Revenue Analytics</h2>
-        <p className="text-xs text-slate-400">Server-side MongoDB aggregated financial performance & payment methods</p>
+        <p className="text-xs text-slate-400">Server-side aggregated financial performance & payment methods</p>
       </div>
 
       {/* KPI Banner */}

@@ -1,24 +1,25 @@
-const Sale = require('../models/Sale');
-const Product = require('../models/Product');
-const StockMovement = require('../models/StockMovement');
-const Customer = require('../models/Customer');
-const AuditLog = require('../models/AuditLog');
+const { supabase } = require('../config/supabase');
+const { formatSale, formatRecord } = require('../utils/supabaseHelpers');
 
 /**
- * Helper to generate next sequential invoice number
+ * Helper to generate next sequential invoice number (Owner Scoped)
  * Format: INV-YYYY-XXXXX
  */
-const generateInvoiceNumber = async () => {
+const generateInvoiceNumber = async (ownerId) => {
   const currentYear = new Date().getFullYear();
   const prefix = `INV-${currentYear}-`;
 
-  const lastSale = await Sale.findOne({ invoiceNumber: { $regex: `^${prefix}` } })
-    .sort({ createdAt: -1 })
-    .select('invoiceNumber');
+  const { data: lastSales } = await supabase
+    .from('sales')
+    .select('invoice_number')
+    .eq('owner_id', ownerId)
+    .ilike('invoice_number', `${prefix}%`)
+    .order('created_at', { ascending: false })
+    .limit(1);
 
   let nextSequence = 1;
-  if (lastSale && lastSale.invoiceNumber) {
-    const parts = lastSale.invoiceNumber.split('-');
+  if (lastSales && lastSales.length > 0 && lastSales[0].invoice_number) {
+    const parts = lastSales[0].invoice_number.split('-');
     if (parts.length === 3) {
       const lastSeq = parseInt(parts[2], 10);
       if (!isNaN(lastSeq)) {
@@ -32,20 +33,22 @@ const generateInvoiceNumber = async () => {
 };
 
 /**
- * @desc    Process customer purchase / POS Billing & atomic stock deduction
+ * @desc    Process customer purchase / POS Billing & atomic stock deduction (Owner Scoped)
  * @route   POST /api/sales
+ * @access  Private
  */
 const createSale = async (req, res, next) => {
   try {
+    const ownerId = req.user.id || req.user._id;
     const {
       customerName,
       customerPhone,
       customerEmail,
-      items, // [{ productId, quantity }]
+      items,
       discountRate = 0,
       taxRate = 0,
       paymentMethod = 'CASH',
-      notes,
+      notes = '',
     } = req.body;
 
     if (!items || !Array.isArray(items) || items.length === 0) {
@@ -56,24 +59,30 @@ const createSale = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Customer name and phone number are required' });
     }
 
-    // STEP 1: Fetch authoritative product details from MongoDB & validate stock
+    // STEP 1: Fetch product details & validate stock
     const processedItems = [];
     let calculatedSubtotal = 0;
     const stockUpdates = [];
 
     for (const item of items) {
-      if (!item.productId || !item.quantity || item.quantity <= 0) {
+      const pId = item.productId || item._id || item.id;
+      const requestedQty = parseInt(item.quantity, 10);
+
+      if (!pId || !requestedQty || requestedQty <= 0) {
         return res.status(400).json({ success: false, message: 'Invalid product item or quantity in cart' });
       }
 
-      const product = await Product.findById(item.productId);
-      if (!product) {
-        return res.status(404).json({ success: false, message: `Product not found (ID: ${item.productId})` });
+      const { data: product, error: prodErr } = await supabase
+        .from('products')
+        .select('*')
+        .eq('id', pId)
+        .eq('owner_id', ownerId)
+        .maybeSingle();
+
+      if (prodErr || !product) {
+        return res.status(404).json({ success: false, message: `Product not found or access denied (ID: ${pId})` });
       }
 
-      const requestedQty = parseInt(item.quantity, 10);
-
-      // Strict backend stock check
       if (product.quantity < requestedQty) {
         return res.status(400).json({
           success: false,
@@ -81,20 +90,18 @@ const createSale = async (req, res, next) => {
         });
       }
 
-      const itemPrice = product.price; // Authoritative price from DB
+      const itemPrice = parseFloat(product.price);
       const itemSubtotal = itemPrice * requestedQty;
       calculatedSubtotal += itemSubtotal;
 
       processedItems.push({
-        productId: product._id,
+        product_id: product.id,
         name: product.name,
         sku: product.sku,
         price: itemPrice,
-        costPrice: product.costPrice || 0,
+        cost_price: parseFloat(product.cost_price) || 0,
         quantity: requestedQty,
         subtotal: itemSubtotal,
-        previousStock: product.quantity,
-        unit: product.unit,
       });
 
       stockUpdates.push({
@@ -112,92 +119,123 @@ const createSale = async (req, res, next) => {
 
     const parsedTaxRate = Math.max(0, parseFloat(taxRate) || 0);
     const taxAmount = (amountAfterDiscount * parsedTaxRate) / 100;
-
     const grandTotal = amountAfterDiscount + taxAmount;
 
-    // STEP 3: Handle Customer Profile (find or create)
-    let customer = await Customer.findOne({ phone: customerPhone.trim() });
-    if (!customer) {
-      customer = await Customer.create({
-        name: customerName.trim(),
-        phone: customerPhone.trim(),
-        email: customerEmail ? customerEmail.trim() : undefined,
-        totalOrders: 1,
-        totalSpent: grandTotal,
-      });
+    // STEP 3: Handle Customer Profile
+    const cleanPhone = customerPhone.trim();
+    const { data: existingCustomer } = await supabase
+      .from('customers')
+      .select('*')
+      .eq('phone', cleanPhone)
+      .eq('owner_id', ownerId)
+      .maybeSingle();
+
+    let customerId = null;
+    if (!existingCustomer) {
+      const { data: newCustomer } = await supabase
+        .from('customers')
+        .insert({
+          owner_id: ownerId,
+          name: customerName.trim(),
+          phone: cleanPhone,
+          email: customerEmail ? customerEmail.trim() : null,
+          total_orders: 1,
+          total_spent: grandTotal,
+        })
+        .select('id')
+        .single();
+      if (newCustomer) customerId = newCustomer.id;
     } else {
-      customer.totalOrders += 1;
-      customer.totalSpent += grandTotal;
-      if (customerName) customer.name = customerName.trim();
-      if (customerEmail) customer.email = customerEmail.trim();
-      await customer.save();
+      customerId = existingCustomer.id;
+      await supabase
+        .from('customers')
+        .update({
+          total_orders: (existingCustomer.total_orders || 0) + 1,
+          total_spent: (parseFloat(existingCustomer.total_spent) || 0) + grandTotal,
+          name: customerName.trim() || existingCustomer.name,
+          email: customerEmail ? customerEmail.trim() : existingCustomer.email,
+        })
+        .eq('id', existingCustomer.id);
     }
 
     // STEP 4: Generate Invoice Number
-    const invoiceNumber = await generateInvoiceNumber();
+    const invoiceNumber = await generateInvoiceNumber(ownerId);
 
-    // STEP 5: Create Sale Document
-    const sale = await Sale.create({
-      invoiceNumber,
-      customerId: customer._id,
-      customerName: customer.name,
-      customerPhone: customer.phone,
-      customerEmail: customer.email,
-      items: processedItems,
-      subtotal: calculatedSubtotal,
-      discountRate: parsedDiscountRate,
-      discountAmount,
-      taxRate: parsedTaxRate,
-      taxAmount,
-      grandTotal,
-      paymentMethod,
-      paymentStatus: 'PAID',
-      saleStatus: 'COMPLETED',
-      notes,
-    });
+    // STEP 5: Create Sale Document in Supabase
+    const { data: sale, error: saleErr } = await supabase
+      .from('sales')
+      .insert({
+        owner_id: ownerId,
+        invoice_number: invoiceNumber,
+        customer_id: customerId,
+        customer_name: customerName.trim(),
+        customer_phone: cleanPhone,
+        customer_email: customerEmail ? customerEmail.trim() : null,
+        subtotal: calculatedSubtotal,
+        discount_rate: parsedDiscountRate,
+        discount_amount: discountAmount,
+        tax_rate: parsedTaxRate,
+        tax_amount: taxAmount,
+        grand_total: grandTotal,
+        payment_method: paymentMethod,
+        payment_status: 'PAID',
+        sale_status: 'COMPLETED',
+        notes: notes || '',
+      })
+      .select('*')
+      .single();
 
-    // STEP 6: Execute Atomic Stock Deductions & Log Stock Movements
+    if (saleErr) throw saleErr;
+
+    // STEP 6: Insert Sale Items
+    const itemsToInsert = processedItems.map((item) => ({
+      sale_id: sale.id,
+      ...item,
+    }));
+    const { error: itemsErr } = await supabase.from('sale_items').insert(itemsToInsert);
+    if (itemsErr) throw itemsErr;
+
+    // STEP 7: Execute Stock Deductions & Log Movements
     const updatedProductsPayload = [];
-
     for (const update of stockUpdates) {
-      // Atomic stock update in MongoDB
-      const updatedProduct = await Product.findByIdAndUpdate(
-        update.product._id,
-        { $inc: { quantity: -update.requestedQty } },
-        { new: true }
-      );
+      await supabase
+        .from('products')
+        .update({ quantity: update.newStock })
+        .eq('id', update.product.id)
+        .eq('owner_id', ownerId);
 
-      // Record immutable StockMovement ledger entry
-      await StockMovement.create({
-        productId: update.product._id,
+      await supabase.from('stock_movements').insert({
+        owner_id: ownerId,
+        product_id: update.product.id,
         type: 'OUT',
         quantity: update.requestedQty,
-        previousStock: update.previousStock,
-        newStock: updatedProduct.quantity,
+        previous_stock: update.previousStock,
+        new_stock: update.newStock,
         reason: 'SALE',
         reference: invoiceNumber,
       });
 
       updatedProductsPayload.push({
-        productId: updatedProduct._id.toString(),
-        sku: updatedProduct.sku,
-        name: updatedProduct.name,
-        newStock: updatedProduct.quantity,
-        minStock: updatedProduct.minStock,
-        isLowStock: updatedProduct.quantity <= updatedProduct.minStock,
+        productId: update.product.id,
+        sku: update.product.sku,
+        name: update.product.name,
+        newStock: update.newStock,
+        minStock: update.product.min_stock,
+        isLowStock: update.newStock <= update.product.min_stock,
         quantityChanged: -update.requestedQty,
       });
     }
 
     // Record Audit Log
-    await AuditLog.create({
+    await supabase.from('audit_logs').insert({
+      owner_id: ownerId,
       action: 'SALE_COMPLETED',
       module: 'SALES',
-      description: `Completed Sale #${invoiceNumber} for ${customer.name} ($${grandTotal.toFixed(2)})`,
-      metadata: { saleId: sale._id, invoiceNumber, grandTotal },
+      description: `Completed Sale #${invoiceNumber} for ${customerName} ($${grandTotal.toFixed(2)})`,
+      metadata: { saleId: sale.id, invoiceNumber, grandTotal },
     });
 
-    // STEP 7: Real-Time WebSocket Event Emission
+    // STEP 8: Real-Time WebSocket Event Emission
     if (req.io) {
       req.io.emit('INVENTORY_UPDATED', {
         type: 'SALE_COMPLETED',
@@ -207,18 +245,24 @@ const createSale = async (req, res, next) => {
       });
 
       req.io.emit('SALE_CREATED', {
-        saleId: sale._id,
-        invoiceNumber: sale.invoiceNumber,
-        grandTotal: sale.grandTotal,
-        customerName: sale.customerName,
-        timestamp: sale.createdAt,
+        saleId: sale.id,
+        invoiceNumber: sale.invoice_number,
+        grandTotal: sale.grand_total,
+        customerName: sale.customer_name,
+        timestamp: sale.created_at,
       });
     }
+
+    const { data: fullSale } = await supabase
+      .from('sales')
+      .select('*, sale_items(*)')
+      .eq('id', sale.id)
+      .single();
 
     res.status(201).json({
       success: true,
       message: 'Purchase completed successfully',
-      data: sale,
+      data: formatSale(fullSale),
     });
   } catch (error) {
     next(error);
@@ -226,63 +270,89 @@ const createSale = async (req, res, next) => {
 };
 
 /**
- * @desc    Process sale return / refund & restore stock in MongoDB
+ * @desc    Process sale return / refund & restore stock (Owner Scoped)
  * @route   POST /api/sales/:id/refund
+ * @access  Private
  */
 const refundSale = async (req, res, next) => {
   try {
-    const sale = await Sale.findById(req.params.id);
-    if (!sale) {
-      return res.status(404).json({ success: false, message: 'Invoice not found' });
+    const ownerId = req.user.id || req.user._id;
+
+    const { data: sale, error: saleErr } = await supabase
+      .from('sales')
+      .select('*, sale_items(*)')
+      .eq('id', req.params.id)
+      .eq('owner_id', ownerId)
+      .maybeSingle();
+
+    if (saleErr || !sale) {
+      return res.status(404).json({ success: false, message: 'Invoice not found or access denied' });
     }
 
-    if (sale.saleStatus === 'REFUNDED') {
+    if (sale.sale_status === 'REFUNDED') {
       return res.status(400).json({ success: false, message: 'This sale has already been refunded' });
     }
 
-    sale.saleStatus = 'REFUNDED';
-    sale.paymentStatus = 'PARTIAL';
-    await sale.save();
+    await supabase
+      .from('sales')
+      .update({ sale_status: 'REFUNDED', payment_status: 'PARTIAL' })
+      .eq('id', sale.id);
 
-    // Restore stock back to MongoDB for each item in the sale
-    for (const item of sale.items) {
-      const product = await Product.findById(item.productId);
-      if (product) {
-        const previousStock = product.quantity;
-        product.quantity += item.quantity;
-        await product.save();
+    const items = sale.sale_items || [];
+    for (const item of items) {
+      if (item.product_id) {
+        const { data: product } = await supabase
+          .from('products')
+          .select('id, quantity')
+          .eq('id', item.product_id)
+          .eq('owner_id', ownerId)
+          .maybeSingle();
 
-        await StockMovement.create({
-          productId: product._id,
-          type: 'RETURN',
-          quantity: item.quantity,
-          previousStock,
-          newStock: product.quantity,
-          reason: 'RETURN',
-          reference: `REFUND-${sale.invoiceNumber}`,
-        });
+        if (product) {
+          const previousStock = product.quantity;
+          const newStock = previousStock + item.quantity;
+          await supabase.from('products').update({ quantity: newStock }).eq('id', product.id);
+
+          await supabase.from('stock_movements').insert({
+            owner_id: ownerId,
+            product_id: product.id,
+            type: 'RETURN',
+            quantity: item.quantity,
+            previous_stock: previousStock,
+            new_stock: newStock,
+            reason: 'RETURN',
+            reference: `REFUND-${sale.invoice_number}`,
+          });
+        }
       }
     }
 
-    await AuditLog.create({
+    await supabase.from('audit_logs').insert({
+      owner_id: ownerId,
       action: 'SALE_REFUNDED',
       module: 'SALES',
-      description: `Refunded Sale #${sale.invoiceNumber} and restored product stock`,
-      metadata: { saleId: sale._id, invoiceNumber: sale.invoiceNumber },
+      description: `Refunded Sale #${sale.invoice_number} and restored product stock`,
+      metadata: { saleId: sale.id, invoiceNumber: sale.invoice_number },
     });
 
     if (req.io) {
       req.io.emit('INVENTORY_UPDATED', {
         type: 'SALE_REFUNDED',
-        invoiceNumber: sale.invoiceNumber,
+        invoiceNumber: sale.invoice_number,
         timestamp: new Date(),
       });
     }
 
+    const { data: updatedSale } = await supabase
+      .from('sales')
+      .select('*, sale_items(*)')
+      .eq('id', sale.id)
+      .single();
+
     res.json({
       success: true,
-      message: `Sale #${sale.invoiceNumber} has been refunded and stock restored to MongoDB!`,
-      data: sale,
+      message: `Sale #${sale.invoice_number} has been refunded and stock restored!`,
+      data: formatSale(updatedSale),
     });
   } catch (error) {
     next(error);
@@ -290,23 +360,44 @@ const refundSale = async (req, res, next) => {
 };
 
 /**
- * @desc    Global cross-collection search (Products, Invoices, Customers)
+ * @desc    Global cross-collection search (Owner Scoped)
  * @route   GET /api/sales/global-search
+ * @access  Private
  */
 const globalSearch = async (req, res, next) => {
   try {
+    const ownerId = req.user.id || req.user._id;
     const { q } = req.query;
     if (!q || q.trim().length < 2) {
       return res.json({ success: true, data: { products: [], sales: [], customers: [] } });
     }
 
-    const regex = new RegExp(q.trim(), 'i');
+    const clean = q.trim().replace(/[%,]/g, '');
 
-    const [products, sales, customers] = await Promise.all([
-      Product.find({ $or: [{ name: regex }, { sku: regex }] }).limit(5).select('name sku price quantity unit'),
-      Sale.find({ $or: [{ invoiceNumber: regex }, { customerName: regex }, { customerPhone: regex }] }).limit(5).select('invoiceNumber customerName grandTotal createdAt'),
-      Customer.find({ $or: [{ name: regex }, { phone: regex }, { email: regex }] }).limit(5).select('name phone totalSpent'),
+    const [productsRes, salesRes, customersRes] = await Promise.all([
+      supabase
+        .from('products')
+        .select('id, name, sku, price, quantity, unit')
+        .eq('owner_id', ownerId)
+        .or(`name.ilike.%${clean}%,sku.ilike.%${clean}%`)
+        .limit(5),
+      supabase
+        .from('sales')
+        .select('id, invoice_number, customer_name, grand_total, created_at')
+        .eq('owner_id', ownerId)
+        .or(`invoice_number.ilike.%${clean}%,customer_name.ilike.%${clean}%,customer_phone.ilike.%${clean}%`)
+        .limit(5),
+      supabase
+        .from('customers')
+        .select('id, name, phone, total_spent')
+        .eq('owner_id', ownerId)
+        .or(`name.ilike.%${clean}%,phone.ilike.%${clean}%,email.ilike.%${clean}%`)
+        .limit(5),
     ]);
+
+    const products = (productsRes.data || []).map(formatRecord);
+    const sales = (salesRes.data || []).map(formatRecord);
+    const customers = (customersRes.data || []).map(formatRecord);
 
     res.json({
       success: true,
@@ -318,60 +409,83 @@ const globalSearch = async (req, res, next) => {
 };
 
 /**
- * @desc    Get all sales transactions
+ * @desc    Get all sales transactions (Owner Scoped)
+ * @route   GET /api/sales
+ * @access  Private
  */
 const getSales = async (req, res, next) => {
   try {
+    const ownerId = req.user.id || req.user._id;
     const { search, paymentMethod, page = 1, limit = 10 } = req.query;
-    const query = {};
+
+    const pageNum = parseInt(page, 10) || 1;
+    const limitNum = parseInt(limit, 10) || 10;
+    const skip = (pageNum - 1) * limitNum;
+
+    let query = supabase
+      .from('sales')
+      .select('*, sale_items(*)', { count: 'exact' })
+      .eq('owner_id', ownerId);
 
     if (search) {
-      query.$or = [
-        { invoiceNumber: { $regex: search, $options: 'i' } },
-        { customerName: { $regex: search, $options: 'i' } },
-        { customerPhone: { $regex: search, $options: 'i' } },
-      ];
+      const clean = search.trim().replace(/[%,]/g, '');
+      query = query.or(`invoice_number.ilike.%${clean}%,customer_name.ilike.%${clean}%,customer_phone.ilike.%${clean}%`);
     }
 
     if (paymentMethod) {
-      query.paymentMethod = paymentMethod;
+      query = query.eq('payment_method', paymentMethod);
     }
 
-    const pageNum = parseInt(page, 10);
-    const limitNum = parseInt(limit, 10);
-    const skip = (pageNum - 1) * limitNum;
+    query = query
+      .order('created_at', { ascending: false })
+      .range(skip, skip + limitNum - 1);
 
-    const [sales, total] = await Promise.all([
-      Sale.find(query).sort({ createdAt: -1 }).skip(skip).limit(limitNum),
-      Sale.countDocuments(query),
-    ]);
+    const { data: sales, count, error } = await query;
+    if (error) throw error;
+
+    const total = count !== null ? count : (sales || []).length;
+    const data = (sales || []).map(formatSale);
 
     res.json({
       success: true,
-      count: sales.length,
+      count: data.length,
       pagination: {
         total,
         page: pageNum,
         pages: Math.ceil(total / limitNum) || 1,
         limit: limitNum,
       },
-      data: sales,
+      data,
     });
   } catch (error) {
     next(error);
   }
 };
 
+/**
+ * @desc    Get single sale by ID (Owner Scoped)
+ * @route   GET /api/sales/:id
+ * @access  Private
+ */
 const getSaleById = async (req, res, next) => {
   try {
-    const sale = await Sale.findById(req.params.id);
+    const ownerId = req.user.id || req.user._id;
+
+    const { data: sale, error } = await supabase
+      .from('sales')
+      .select('*, sale_items(*)')
+      .eq('id', req.params.id)
+      .eq('owner_id', ownerId)
+      .maybeSingle();
+
+    if (error) throw error;
     if (!sale) {
-      return res.status(404).json({ success: false, message: 'Invoice not found' });
+      return res.status(404).json({ success: false, message: 'Invoice not found or access denied' });
     }
 
     res.json({
       success: true,
-      data: sale,
+      data: formatSale(sale),
     });
   } catch (error) {
     next(error);

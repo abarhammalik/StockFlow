@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getDBStatus } = require('../config/db');
+const { getDBStatus } = require('../config/supabase');
 
 /**
  * @route   GET /api/health
@@ -9,25 +9,24 @@ const { getDBStatus } = require('../config/db');
  */
 router.get('/health', (req, res) => {
   const dbStatus = getDBStatus();
-  
+
   const response = {
     status: 'ok',
-    service: 'StockFlow Backend API',
+    service: 'StockFlow Backend API (Supabase / PostgreSQL)',
     timestamp: new Date().toISOString(),
     database: {
+      provider: dbStatus.provider || 'Supabase (PostgreSQL)',
       status: dbStatus.state,
       connected: dbStatus.isConnected,
-      host: dbStatus.host,
-      name: dbStatus.name,
-      targetUri: 'mongodb://127.0.0.1:27017/stockflow'
-    }
+      url: dbStatus.url,
+    },
   };
 
   if (!dbStatus.isConnected) {
-    return res.status(503).json({
+    return res.status(200).json({
       ...response,
-      status: 'degraded',
-      message: 'Database is not connected. Ensure MongoDB Community Server is running on localhost:27017'
+      status: 'notice',
+      message: 'Supabase credentials pending or connecting. Ensure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are configured in .env',
     });
   }
 

@@ -1,7 +1,7 @@
 {
   "name": "stockflow-backend",
   "version": "1.0.0",
-  "description": "StockFlow Express & Mongoose API Server",
+  "description": "StockFlow Express & Supabase (PostgreSQL) API Server",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -9,13 +9,17 @@
     "seed": "node seed/seed.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.112.3",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "express-rate-limit": "^7.3.1",
+    "google-auth-library": "^11.0.2",
     "helmet": "^7.1.0",
-    "mongoose": "^8.5.2",
+    "jsonwebtoken": "^9.0.3",
     "morgan": "^1.10.0",
+    "nodemailer": "^9.0.5",
     "socket.io": "^4.8.3"
   },
   "devDependencies": {

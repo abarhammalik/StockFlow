@@ -53,7 +53,7 @@ export default function Dashboard({ onAddProduct, onRecordStock, onViewProduct }
       setTopProducts(topRes.data || []);
       setError(null);
     } catch (err) {
-      setError(err.message || 'Failed to load dashboard statistics from MongoDB');
+      setError(err.message || 'Failed to load dashboard statistics from cloud database');
     } finally {
       setLoading(false);
       setRefreshing(false);

@@ -6,7 +6,6 @@ import {
   Truck, 
   TrendingUp, 
   AlertTriangle, 
-  CheckCircle2, 
   Database,
   Terminal,
   ChevronRight
@@ -63,88 +62,35 @@ export default function Analytics() {
   const BAR_COLORS = ['#6366f1', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ec4899', '#3b82f6', '#14b8a6'];
 
   const pipelineCodeSnippets = {
-    category: `// Category Valuation Pipeline ($lookup, $unwind, $group, $project, $sort)
-await Product.aggregate([
-  {
-    $lookup: {
-      from: 'categories',
-      localField: 'categoryId',
-      foreignField: '_id',
-      as: 'category'
-    }
-  },
-  { $unwind: '$category' },
-  {
-    $group: {
-      _id: '$category._id',
-      categoryName: { $first: '$category.name' },
-      productCount: { $sum: 1 },
-      totalQuantity: { $sum: '$quantity' },
-      totalInventoryValue: { $sum: { $multiply: ['$quantity', '$price'] } }
-    }
-  },
-  { $sort: { totalInventoryValue: -1 } }
-]);`,
-    supplier: `// Supplier Analysis Pipeline ($lookup, $unwind, $group, $project)
-await Product.aggregate([
-  {
-    $lookup: {
-      from: 'suppliers',
-      localField: 'supplierId',
-      foreignField: '_id',
-      as: 'supplier'
-    }
-  },
-  { $unwind: '$supplier' },
-  {
-    $group: {
-      _id: '$supplier._id',
-      companyName: { $first: '$supplier.company' },
-      productCount: { $sum: 1 },
-      totalInventoryValue: { $sum: { $multiply: ['$quantity', '$price'] } }
-    }
-  },
-  { $sort: { totalInventoryValue: -1 } }
-]);`,
-    topProducts: `// Top Moving Products Pipeline ($group, $sort, $limit, $lookup)
-await StockMovement.aggregate([
-  {
-    $group: {
-      _id: '$productId',
-      totalMovedQuantity: { $sum: '$quantity' },
-      movementCount: { $sum: 1 }
-    }
-  },
-  { $sort: { totalMovedQuantity: -1 } },
-  { $limit: 6 },
-  {
-    $lookup: {
-      from: 'products',
-      localField: '_id',
-      foreignField: '_id',
-      as: 'product'
-    }
-  },
-  { $unwind: '$product' }
-]);`,
-    lowStock: `// Low-Stock Evaluation Pipeline ($match using $expr)
-await Product.aggregate([
-  {
-    $match: {
-      $expr: { $lte: ['$quantity', '$minStock'] }
-    }
-  },
-  {
-    $lookup: {
-      from: 'categories',
-      localField: 'categoryId',
-      foreignField: '_id',
-      as: 'category'
-    }
-  },
-  { $unwind: '$category' },
-  { $sort: { quantity: 1 } }
-]);`
+    category: `// Category Valuation & Profit Margins (Supabase / PostgreSQL)
+const { data: categories } = await supabase
+  .from('categories')
+  .select('id, name, description, products(id, quantity, price, cost_price, min_stock)')
+  .eq('owner_id', req.user.id);
+
+// Computes valuation = SUM(quantity * price), cost = SUM(quantity * cost_price)
+// and profit margin = (totalValuation - totalCost) / totalValuation * 100%`,
+    supplier: `// Supplier Portfolio Analysis (Supabase / PostgreSQL)
+const { data: suppliers } = await supabase
+  .from('suppliers')
+  .select('id, name, company, email, phone, products(id, quantity, price, min_stock)')
+  .eq('owner_id', req.user.id);
+
+// Aggregates total supplied products, total volume, and active valuation`,
+    topProducts: `// Top-Moving Products by Stock Ledger (Supabase / PostgreSQL)
+const { data: movements } = await supabase
+  .from('stock_movements')
+  .select('product_id, quantity, type, products:product_id(id, name, sku, price, quantity)')
+  .eq('owner_id', req.user.id);
+
+// Groups movements by product_id, aggregates OUT/IN quantities, and sorts top movers`,
+    lowStock: `// Low-Stock Threshold Evaluation (Supabase / PostgreSQL)
+const { data: lowStock } = await supabase
+  .from('products')
+  .select('id, name, sku, price, quantity, min_stock, unit, categories(name), suppliers(company)')
+  .eq('owner_id', req.user.id);
+
+// Filters products where quantity <= min_stock sorted by lowest stock available`,
   };
 
   return (
@@ -157,13 +103,13 @@ await Product.aggregate([
           </div>
           <div>
             <h2 className="text-xl font-bold text-slate-800 tracking-tight flex items-center gap-2">
-              MongoDB Aggregation Showcase
+              Database Analytics & Insights
               <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 font-medium border border-emerald-200">
-                Judging Showcase
+                Supabase PostgreSQL
               </span>
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Live server-side MongoDB aggregation pipelines computing metrics on Community Server
+              Live server-side PostgreSQL metrics and aggregated portfolio data
             </p>
           </div>
         </div>
@@ -175,7 +121,7 @@ await Product.aggregate([
           { id: 'category', label: 'Category Valuation Pipeline', icon: Layers },
           { id: 'supplier', label: 'Supplier Portfolio Pipeline', icon: Truck },
           { id: 'topProducts', label: 'Top-Moving Products Pipeline', icon: TrendingUp },
-          { id: 'lowStock', label: 'Low-Stock $expr Pipeline', icon: AlertTriangle },
+          { id: 'lowStock', label: 'Low-Stock Threshold Pipeline', icon: AlertTriangle },
         ].map((tab) => {
           const Icon = tab.icon;
           const isSelected = activeTab === tab.id;
@@ -200,54 +146,54 @@ await Product.aggregate([
       <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
         <h4 className="text-xs font-bold text-slate-600 font-mono uppercase tracking-wider flex items-center gap-2">
           <Terminal className="w-4 h-4 text-indigo-600" />
-          Active Pipeline Stage Sequence
+          Active Query Execution Flow
         </h4>
         <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
           {activeTab === 'category' && (
             <>
-              <span className="px-3 py-1 bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-lg">$lookup (categories)</span>
+              <span className="px-3 py-1 bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-lg">SELECT categories</span>
               <ChevronRight className="w-4 h-4 text-slate-300" />
-              <span className="px-3 py-1 bg-sky-50 border border-sky-100 text-sky-700 rounded-lg">$unwind</span>
+              <span className="px-3 py-1 bg-sky-50 border border-sky-100 text-sky-700 rounded-lg">JOIN products</span>
               <ChevronRight className="w-4 h-4 text-slate-300" />
-              <span className="px-3 py-1 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-lg">$group (totalInventoryValue)</span>
+              <span className="px-3 py-1 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-lg">AGGREGATE totalInventoryValue</span>
               <ChevronRight className="w-4 h-4 text-slate-300" />
-              <span className="px-3 py-1 bg-purple-50 border border-purple-100 text-purple-700 rounded-lg">$project (profitMargin)</span>
+              <span className="px-3 py-1 bg-purple-50 border border-purple-100 text-purple-700 rounded-lg">CALCULATE profitMargin</span>
               <ChevronRight className="w-4 h-4 text-slate-300" />
-              <span className="px-3 py-1 bg-slate-100 border border-slate-200 text-slate-600 rounded-lg">$sort</span>
+              <span className="px-3 py-1 bg-slate-100 border border-slate-200 text-slate-600 rounded-lg">ORDER BY valuation DESC</span>
             </>
           )}
 
           {activeTab === 'supplier' && (
             <>
-              <span className="px-3 py-1 bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-lg">$lookup (suppliers)</span>
+              <span className="px-3 py-1 bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-lg">SELECT suppliers</span>
               <ChevronRight className="w-4 h-4 text-slate-300" />
-              <span className="px-3 py-1 bg-sky-50 border border-sky-100 text-sky-700 rounded-lg">$unwind</span>
+              <span className="px-3 py-1 bg-sky-50 border border-sky-100 text-sky-700 rounded-lg">JOIN products</span>
               <ChevronRight className="w-4 h-4 text-slate-300" />
-              <span className="px-3 py-1 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-lg">$group (portfolio metrics)</span>
+              <span className="px-3 py-1 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-lg">AGGREGATE portfolio value</span>
               <ChevronRight className="w-4 h-4 text-slate-300" />
-              <span className="px-3 py-1 bg-purple-50 border border-purple-100 text-purple-700 rounded-lg">$sort</span>
+              <span className="px-3 py-1 bg-purple-50 border border-purple-100 text-purple-700 rounded-lg">ORDER BY totalInventoryValue</span>
             </>
           )}
 
           {activeTab === 'topProducts' && (
             <>
-              <span className="px-3 py-1 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-lg">$group (sum quantity)</span>
+              <span className="px-3 py-1 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-lg">SELECT stock_movements</span>
               <ChevronRight className="w-4 h-4 text-slate-300" />
-              <span className="px-3 py-1 bg-slate-100 border border-slate-200 text-slate-600 rounded-lg">$sort</span>
+              <span className="px-3 py-1 bg-slate-100 border border-slate-200 text-slate-600 rounded-lg">GROUP BY product_id</span>
               <ChevronRight className="w-4 h-4 text-slate-300" />
-              <span className="px-3 py-1 bg-amber-50 border border-amber-100 text-amber-700 rounded-lg">$limit 6</span>
+              <span className="px-3 py-1 bg-amber-50 border border-amber-100 text-amber-700 rounded-lg">ORDER BY totalMoved DESC</span>
               <ChevronRight className="w-4 h-4 text-slate-300" />
-              <span className="px-3 py-1 bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-lg">$lookup (products)</span>
+              <span className="px-3 py-1 bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-lg">JOIN products (SKU, name)</span>
             </>
           )}
 
           {activeTab === 'lowStock' && (
             <>
-              <span className="px-3 py-1 bg-amber-50 border border-amber-100 text-amber-700 rounded-lg">$match ($expr: quantity &lt;= minStock)</span>
+              <span className="px-3 py-1 bg-amber-50 border border-amber-100 text-amber-700 rounded-lg">WHERE quantity &lt;= min_stock</span>
               <ChevronRight className="w-4 h-4 text-slate-300" />
-              <span className="px-3 py-1 bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-lg">$lookup</span>
+              <span className="px-3 py-1 bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-lg">JOIN categories & suppliers</span>
               <ChevronRight className="w-4 h-4 text-slate-300" />
-              <span className="px-3 py-1 bg-slate-100 border border-slate-200 text-slate-600 rounded-lg">$sort</span>
+              <span className="px-3 py-1 bg-slate-100 border border-slate-200 text-slate-600 rounded-lg">ORDER BY quantity ASC</span>
             </>
           )}
         </div>
@@ -261,10 +207,10 @@ await Product.aggregate([
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2">
                 <Code2 className="w-4 h-4 text-indigo-600" />
-                MongoDB Mongoose Aggregation Query
+                Supabase Query Execution
               </h3>
               <span className="text-[10px] font-mono bg-slate-100 px-2 py-0.5 text-slate-500 border border-slate-200 rounded">
-                Node.js Driver
+                Node.js Client
               </span>
             </div>
 
@@ -273,7 +219,7 @@ await Product.aggregate([
             </pre>
           </div>
           <p className="text-[11px] text-slate-400 mt-4">
-            * All calculations take place natively inside MongoDB server memory, returning computed payloads directly to Express.
+            * All calculations take place natively in the cloud database and Express backend, returning computed payloads directly.
           </p>
         </div>
 
@@ -285,50 +231,72 @@ await Product.aggregate([
               <span className="text-xs font-mono text-emerald-600">Live Payload</span>
             </div>
 
-            <div className="h-64 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart 
-                  data={
-                    activeTab === 'category' ? categoryData :
-                    activeTab === 'supplier' ? supplierData :
-                    activeTab === 'topProducts' ? topProducts : lowStockData
-                  } 
-                  margin={{ top: 10, right: 10, left: -20, bottom: 25 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                  <XAxis 
-                    dataKey={
-                      activeTab === 'category' ? 'categoryName' :
-                      activeTab === 'supplier' ? 'companyName' :
-                      activeTab === 'topProducts' ? 'name' : 'name'
-                    } 
-                    stroke="#94a3b8" 
-                    fontSize={10} 
-                    tickLine={false}
-                    interval={0}
-                    angle={-20}
-                    textAnchor="end"
-                  />
-                  <YAxis stroke="#94a3b8" fontSize={10} tickLine={false} />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0', borderRadius: '0.75rem', fontSize: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
-                  />
-                  <Bar 
-                    dataKey={
-                      activeTab === 'category' ? 'totalInventoryValue' :
-                      activeTab === 'supplier' ? 'totalInventoryValue' :
-                      activeTab === 'topProducts' ? 'totalMovedQuantity' : 'quantity'
-                    } 
-                    radius={[6, 6, 0, 0]}
-                  >
-                    {categoryData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={BAR_COLORS[index % BAR_COLORS.length]} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            {loading ? (
+              <div className="h-64 flex items-center justify-center text-xs text-slate-400">Loading live metrics...</div>
+            ) : (
+              <div className="h-64 w-full">
+                {activeTab === 'category' && (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={categoryData} layout="vertical" margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                      <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(val) => `$${val}`} />
+                      <YAxis type="category" dataKey="categoryName" tick={{ fontSize: 10 }} width={90} />
+                      <Tooltip formatter={(val) => [`$${Number(val).toLocaleString()}`, 'Total Inventory Value']} />
+                      <Bar dataKey="totalInventoryValue" radius={[0, 4, 4, 0]}>
+                        {categoryData.map((_, index) => (
+                          <Cell key={`cell-${index}`} fill={BAR_COLORS[index % BAR_COLORS.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+
+                {activeTab === 'supplier' && (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={supplierData} layout="vertical" margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                      <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(val) => `$${val}`} />
+                      <YAxis type="category" dataKey="companyName" tick={{ fontSize: 10 }} width={100} />
+                      <Tooltip formatter={(val) => [`$${Number(val).toLocaleString()}`, 'Portfolio Inventory Value']} />
+                      <Bar dataKey="totalInventoryValue" radius={[0, 4, 4, 0]}>
+                        {supplierData.map((_, index) => (
+                          <Cell key={`cell-${index}`} fill={BAR_COLORS[index % BAR_COLORS.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+
+                {activeTab === 'topProducts' && (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={topProducts} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="sku" tick={{ fontSize: 10 }} />
+                      <YAxis tick={{ fontSize: 10 }} />
+                      <Tooltip formatter={(val) => [`${val} Units`, 'Moved Quantity']} />
+                      <Bar dataKey="totalMovedQuantity" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+
+                {activeTab === 'lowStock' && (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={lowStockData} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="sku" tick={{ fontSize: 10 }} />
+                      <YAxis tick={{ fontSize: 10 }} />
+                      <Tooltip formatter={(val, name) => [val, name === 'quantity' ? 'Current Stock' : 'Min Required']} />
+                      <Bar dataKey="quantity" fill="#ef4444" radius={[4, 4, 0, 0]} name="Current Stock" />
+                      <Bar dataKey="minStock" fill="#cbd5e1" radius={[4, 4, 0, 0]} name="Min Threshold" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            )}
           </div>
+          <p className="text-[11px] text-slate-400 mt-4">
+            Visual representations rendered in real-time using Recharts SVG engine from server-side query results.
+          </p>
         </div>
       </div>
     </div>

@@ -68,7 +68,7 @@ export default function GlobalSearchModal({ isOpen, onClose }) {
         </div>
 
         {loading ? (
-          <div className="py-8 text-center text-xs text-slate-400">Searching MongoDB collections...</div>
+          <div className="py-8 text-center text-xs text-slate-400">Searching database records...</div>
         ) : (
           <div className="space-y-4 max-h-96 overflow-y-auto pr-1">
             {/* Products Matches */}

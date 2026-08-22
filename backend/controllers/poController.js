@@ -1,15 +1,21 @@
-const PurchaseOrder = require('../models/PurchaseOrder');
-const Product = require('../models/Product');
-const StockMovement = require('../models/StockMovement');
-const AuditLog = require('../models/AuditLog');
+const { supabase } = require('../config/supabase');
+const { formatRecord } = require('../utils/supabaseHelpers');
 
-const generatePONumber = async () => {
+const generatePONumber = async (ownerId) => {
   const currentYear = new Date().getFullYear();
   const prefix = `PO-${currentYear}-`;
-  const lastPO = await PurchaseOrder.findOne({ poNumber: { $regex: `^${prefix}` } }).sort({ createdAt: -1 });
+
+  const { data: lastPOs } = await supabase
+    .from('purchase_orders')
+    .select('po_number')
+    .eq('owner_id', ownerId)
+    .ilike('po_number', `${prefix}%`)
+    .order('created_at', { ascending: false })
+    .limit(1);
+
   let nextSeq = 1;
-  if (lastPO && lastPO.poNumber) {
-    const parts = lastPO.poNumber.split('-');
+  if (lastPOs && lastPOs.length > 0 && lastPOs[0].po_number) {
+    const parts = lastPOs[0].po_number.split('-');
     if (parts.length === 3) {
       const seq = parseInt(parts[2], 10);
       if (!isNaN(seq)) nextSeq = seq + 1;
@@ -18,35 +24,63 @@ const generatePONumber = async () => {
   return `${prefix}${String(nextSeq).padStart(5, '0')}`;
 };
 
+/**
+ * @desc    Get purchase orders (Owner Scoped)
+ * @route   GET /api/purchase-orders
+ * @access  Private
+ */
 const getPurchaseOrders = async (req, res, next) => {
   try {
+    const ownerId = req.user.id || req.user._id;
     const { status, page = 1, limit = 10 } = req.query;
-    const query = {};
-    if (status) query.status = status;
 
-    const pageNum = parseInt(page, 10);
-    const limitNum = parseInt(limit, 10);
+    const pageNum = parseInt(page, 10) || 1;
+    const limitNum = parseInt(limit, 10) || 10;
     const skip = (pageNum - 1) * limitNum;
 
-    const [orders, total] = await Promise.all([
-      PurchaseOrder.find(query).sort({ createdAt: -1 }).skip(skip).limit(limitNum),
-      PurchaseOrder.countDocuments(query),
-    ]);
+    let query = supabase
+      .from('purchase_orders')
+      .select('*', { count: 'exact' })
+      .eq('owner_id', ownerId);
+
+    if (status) query = query.eq('status', status);
+
+    query = query
+      .order('created_at', { ascending: false })
+      .range(skip, skip + limitNum - 1);
+
+    const { data: orders, count, error } = await query;
+    if (error) throw error;
+
+    const total = count !== null ? count : (orders || []).length;
+    const data = (orders || []).map(formatRecord);
 
     res.json({
       success: true,
-      count: orders.length,
-      pagination: { total, page: pageNum, pages: Math.ceil(total / limitNum) || 1, limit: limitNum },
-      data: orders,
+      count: data.length,
+      pagination: {
+        total,
+        page: pageNum,
+        pages: Math.ceil(total / limitNum) || 1,
+        limit: limitNum,
+      },
+      data,
     });
   } catch (error) {
     next(error);
   }
 };
 
+/**
+ * @desc    Create purchase order (Owner Scoped)
+ * @route   POST /api/purchase-orders
+ * @access  Private
+ */
 const createPurchaseOrder = async (req, res, next) => {
   try {
-    const { supplierId, supplierName, items, notes, expectedDeliveryDate } = req.body;
+    const ownerId = req.user.id || req.user._id;
+    const { supplierId, supplierName, items, notes = '', expectedDeliveryDate } = req.body;
+
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ success: false, message: 'PO items cannot be empty' });
     }
@@ -55,15 +89,23 @@ const createPurchaseOrder = async (req, res, next) => {
     const processedItems = [];
 
     for (const item of items) {
-      const product = await Product.findById(item.productId);
+      const pId = item.productId || item._id || item.id;
+      const { data: product } = await supabase
+        .from('products')
+        .select('*')
+        .eq('id', pId)
+        .eq('owner_id', ownerId)
+        .maybeSingle();
+
       if (!product) continue;
       const qty = parseInt(item.quantity, 10) || 1;
-      const cost = parseFloat(item.costPrice) || product.costPrice || 0;
+      const cost = parseFloat(item.costPrice) || parseFloat(product.cost_price) || 0;
       const subtotal = qty * cost;
       calculatedTotal += subtotal;
 
       processedItems.push({
-        productId: product._id,
+        productId: product.id,
+        _id: product.id,
         name: product.name,
         sku: product.sku,
         costPrice: cost,
@@ -72,83 +114,133 @@ const createPurchaseOrder = async (req, res, next) => {
       });
     }
 
-    const poNumber = await generatePONumber();
+    const poNumber = await generatePONumber(ownerId);
 
-    const po = await PurchaseOrder.create({
-      poNumber,
-      supplierId,
-      supplierName,
-      items: processedItems,
-      totalAmount: calculatedTotal,
-      status: 'ORDERED',
-      notes,
-      expectedDeliveryDate,
-    });
+    const { data: po, error: insertErr } = await supabase
+      .from('purchase_orders')
+      .insert({
+        owner_id: ownerId,
+        po_number: poNumber,
+        supplier_id: supplierId || null,
+        supplier_name: supplierName || 'General Supplier',
+        items: processedItems,
+        total_amount: calculatedTotal,
+        status: 'ORDERED',
+        notes,
+        expected_delivery_date: expectedDeliveryDate ? new Date(expectedDeliveryDate).toISOString() : null,
+      })
+      .select('*')
+      .single();
 
-    await AuditLog.create({
+    if (insertErr) throw insertErr;
+
+    await supabase.from('audit_logs').insert({
+      owner_id: ownerId,
       action: 'PO_CREATED',
       module: 'PURCHASE_ORDERS',
-      description: `Created Purchase Order #${poNumber} for ${supplierName} ($${calculatedTotal.toFixed(2)})`,
-      metadata: { poId: po._id, poNumber },
+      description: `Created Purchase Order #${poNumber} for ${supplierName || 'Supplier'} ($${calculatedTotal.toFixed(2)})`,
+      metadata: { poId: po.id, poNumber },
     });
 
-    res.status(201).json({ success: true, message: 'Purchase Order created', data: po });
+    res.status(201).json({
+      success: true,
+      message: 'Purchase Order created',
+      data: formatRecord(po),
+    });
   } catch (error) {
     next(error);
   }
 };
 
+/**
+ * @desc    Update PO status (Owner Scoped)
+ * @route   PUT /api/purchase-orders/:id/status
+ * @access  Private
+ */
 const updatePOStatus = async (req, res, next) => {
   try {
+    const ownerId = req.user.id || req.user._id;
     const { status } = req.body;
-    const po = await PurchaseOrder.findById(req.params.id);
-    if (!po) return res.status(404).json({ success: false, message: 'PO not found' });
+
+    const { data: po, error: fetchErr } = await supabase
+      .from('purchase_orders')
+      .select('*')
+      .eq('id', req.params.id)
+      .eq('owner_id', ownerId)
+      .maybeSingle();
+
+    if (fetchErr || !po) return res.status(404).json({ success: false, message: 'PO not found or access denied' });
 
     const prevStatus = po.status;
-    po.status = status;
+    const updates = { status };
 
-    // If status is changed to RECEIVED, auto-restock MongoDB product stock!
     if (status === 'RECEIVED' && prevStatus !== 'RECEIVED') {
-      po.receivedAt = new Date();
-      for (const item of po.items) {
-        const product = await Product.findById(item.productId);
-        if (product) {
-          const previousStock = product.quantity;
-          product.quantity += item.quantity;
-          await product.save();
+      updates.received_at = new Date().toISOString();
+      const items = Array.isArray(po.items) ? po.items : [];
 
-          await StockMovement.create({
-            productId: product._id,
-            type: 'IN',
-            quantity: item.quantity,
-            previousStock,
-            newStock: product.quantity,
-            reason: 'PURCHASE',
-            reference: po.poNumber,
-          });
+      for (const item of items) {
+        const pId = item.productId || item._id || item.id;
+        if (pId) {
+          const { data: product } = await supabase
+            .from('products')
+            .select('*')
+            .eq('id', pId)
+            .eq('owner_id', ownerId)
+            .maybeSingle();
 
-          if (req.io) {
-            req.io.emit('INVENTORY_UPDATED', {
-              type: 'PO_RECEIVED',
-              poNumber: po.poNumber,
-              productId: product._id,
-              newStock: product.quantity,
+          if (product) {
+            const previousStock = product.quantity;
+            const itemQty = parseInt(item.quantity, 10) || 0;
+            const newStock = previousStock + itemQty;
+
+            await supabase.from('products').update({ quantity: newStock }).eq('id', product.id);
+
+            await supabase.from('stock_movements').insert({
+              owner_id: ownerId,
+              product_id: product.id,
+              type: 'IN',
+              quantity: itemQty,
+              previous_stock: previousStock,
+              new_stock: newStock,
+              reason: 'PURCHASE',
+              reference: po.po_number,
             });
+
+            if (req.io) {
+              req.io.emit('INVENTORY_UPDATED', {
+                type: 'PO_RECEIVED',
+                poNumber: po.po_number,
+                productId: product.id,
+                newStock,
+              });
+            }
           }
         }
       }
     }
 
-    await po.save();
+    const { data: updatedPo, error: updateErr } = await supabase
+      .from('purchase_orders')
+      .update(updates)
+      .eq('id', po.id)
+      .select('*')
+      .single();
 
-    await AuditLog.create({
+    if (updateErr) throw updateErr;
+
+    await supabase.from('audit_logs').insert({
+      owner_id: ownerId,
       action: 'PO_STATUS_UPDATED',
       module: 'PURCHASE_ORDERS',
-      description: `Updated PO #${po.poNumber} status to ${status}`,
-      metadata: { poId: po._id, status },
+      description: `Updated PO #${po.po_number} status to ${status}`,
+      metadata: { poId: po.id, status },
     });
 
-    res.json({ success: true, message: `PO status updated to ${status}`, data: po });
+    res.json({
+      success: true,
+      message: `PO status updated to ${status}`,
+      data: formatRecord(updatedPo),
+    });
   } catch (error) {
     next(error);
   }

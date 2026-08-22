@@ -7,6 +7,9 @@ const {
   updateCustomer,
 } = require('../controllers/customerController');
 const { validateObjectId } = require('../middleware/validation');
+const { protect } = require('../middleware/auth');
+
+router.use(protect);
 
 router.get('/', getCustomers);
 router.get('/phone/:phone', getCustomerByPhone);

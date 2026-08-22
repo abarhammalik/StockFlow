@@ -8,6 +8,9 @@ const {
   deleteSupplier
 } = require('../controllers/supplierController');
 const { validateObjectId } = require('../middleware/validation');
+const { protect } = require('../middleware/auth');
+
+router.use(protect);
 
 router.route('/')
   .get(getSuppliers)

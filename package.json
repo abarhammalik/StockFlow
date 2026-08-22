@@ -1,7 +1,7 @@
 {
   "name": "stockflow-root",
   "version": "1.0.0",
-  "description": "StockFlow — Modern Inventory Management Platform (MongoDB Hackathon)",
+  "description": "StockFlow — Modern Inventory Management Platform (Supabase & PostgreSQL)",
   "private": true,
   "scripts": {
     "backend": "cd backend && node server.js",
@@ -13,7 +13,8 @@
   },
   "keywords": [
     "inventory",
-    "mongodb",
+    "supabase",
+    "postgresql",
     "express",
     "react",
     "nodejs",

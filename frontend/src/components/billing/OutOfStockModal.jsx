@@ -21,10 +21,10 @@ export default function OutOfStockModal({ isOpen, onClose, productInfo }) {
           <p className="text-xs text-slate-500 max-w-sm mx-auto font-medium">
             {productInfo?.name ? (
               <>
-                <strong className="text-slate-800 font-bold">'{productInfo.name}'</strong> ({productInfo.sku || 'SKU'}) has no remaining inventory available in MongoDB.
+                <strong className="text-slate-800 font-bold">'{productInfo.name}'</strong> ({productInfo.sku || 'SKU'}) has no remaining inventory available in catalog.
               </>
             ) : (
-              'The requested quantity exceeds the current available inventory limit in MongoDB.'
+              'The requested quantity exceeds the current available inventory limit.'
             )}
           </p>
         </div>

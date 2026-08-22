@@ -304,7 +304,7 @@ export default function Billing() {
           <h2 className="text-xl font-bold text-slate-800 tracking-tight flex items-center gap-2">
             Point of Sale & Billing (POS)
             <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200">
-              Live MongoDB Sync
+              Live Cloud Sync
             </span>
           </h2>
           <p className="text-xs text-slate-400">Process customer orders, auto-generate invoices, and deduct stock live</p>

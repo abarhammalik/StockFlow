@@ -1,152 +1,141 @@
-const Product = require('../models/Product');
-const Category = require('../models/Category');
-const Supplier = require('../models/Supplier');
-const StockMovement = require('../models/StockMovement');
-const Sale = require('../models/Sale');
+const { supabase } = require('../config/supabase');
+const { formatRecord, formatSale } = require('../utils/supabaseHelpers');
 
 /**
- * @desc    Get Dashboard Summary Metrics using MongoDB $facet pipeline
+ * @desc    Get Dashboard Summary Metrics (Owner Scoped)
  * @route   GET /api/analytics/dashboard
+ * @access  Private
  */
 const getDashboardSummary = async (req, res, next) => {
   try {
+    const ownerId = req.user.id || req.user._id;
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
-    const [summaryFacet, todaySalesFacet] = await Promise.all([
-      Product.aggregate([
-        {
-          $facet: {
-            productMetrics: [
-              {
-                $group: {
-                  _id: null,
-                  totalProducts: { $sum: 1 },
-                  totalQuantity: { $sum: '$quantity' },
-                  totalInventoryValue: { $sum: { $multiply: ['$quantity', '$price'] } },
-                  totalCostValue: { $sum: { $multiply: ['$quantity', '$costPrice'] } },
-                  lowStockCount: {
-                    $sum: {
-                      $cond: [
-                        { $and: [{ $gt: ['$quantity', 0] }, { $lte: ['$quantity', '$minStock'] }] },
-                        1,
-                        0
-                      ]
-                    }
-                  },
-                  outOfStockCount: {
-                    $sum: { $cond: [{ $eq: ['$quantity', 0] }, 1, 0] }
-                  },
-                  healthyStockCount: {
-                    $sum: {
-                      $cond: [
-                        { $and: [{ $gt: ['$quantity', '$minStock'] }, { $lt: ['$quantity', '$maxStock'] }] },
-                        1,
-                        0
-                      ]
-                    }
-                  },
-                  overstockedCount: {
-                    $sum: { $cond: [{ $gte: ['$quantity', '$maxStock'] }, 1, 0] }
-                  }
-                }
-              }
-            ],
-            lowStockProducts: [
-              {
-                $match: {
-                  $expr: { $lte: ['$quantity', '$minStock'] }
-                }
-              },
-              { $sort: { quantity: 1 } },
-              { $limit: 5 },
-              {
-                $lookup: {
-                  from: 'categories',
-                  localField: 'categoryId',
-                  foreignField: '_id',
-                  as: 'category'
-                }
-              },
-              { $unwind: { path: '$category', preserveNullAndEmptyArrays: true } },
-              {
-                $project: {
-                  _id: 1,
-                  name: 1,
-                  sku: 1,
-                  quantity: 1,
-                  minStock: 1,
-                  price: 1,
-                  unit: 1,
-                  categoryName: '$category.name'
-                }
-              }
-            ]
-          }
-        }
-      ]),
-      Sale.aggregate([
-        {
-          $match: {
-            createdAt: { $gte: startOfToday },
-            saleStatus: 'COMPLETED'
-          }
-        },
-        {
-          $group: {
-            _id: null,
-            todayRevenue: { $sum: '$grandTotal' },
-            todayOrdersCount: { $sum: 1 }
-          }
-        }
-      ])
-    ]);
-
-    const totalCategories = await Category.countDocuments({ status: 'active' });
-    const totalSuppliers = await Supplier.countDocuments({ status: 'active' });
-
-    const [recentMovements, recentSales] = await Promise.all([
-      StockMovement.find()
-        .populate({
-          path: 'productId',
-          select: 'name sku unit price'
-        })
-        .sort({ createdAt: -1 })
+    const [
+      productsRes,
+      todaySalesRes,
+      categoriesCountRes,
+      suppliersCountRes,
+      recentMovementsRes,
+      recentSalesRes,
+    ] = await Promise.all([
+      supabase
+        .from('products')
+        .select('id, name, sku, price, cost_price, quantity, min_stock, max_stock, unit, category_id, categories:category_id(id, name)')
+        .eq('owner_id', ownerId),
+      supabase
+        .from('sales')
+        .select('grand_total')
+        .eq('owner_id', ownerId)
+        .eq('sale_status', 'COMPLETED')
+        .gte('created_at', startOfToday.toISOString()),
+      supabase
+        .from('categories')
+        .select('id', { count: 'exact', head: true })
+        .eq('owner_id', ownerId)
+        .eq('status', 'active'),
+      supabase
+        .from('suppliers')
+        .select('id', { count: 'exact', head: true })
+        .eq('owner_id', ownerId)
+        .eq('status', 'active'),
+      supabase
+        .from('stock_movements')
+        .select('*, products:product_id(name, sku, unit, price)')
+        .eq('owner_id', ownerId)
+        .order('created_at', { ascending: false })
         .limit(6),
-      Sale.find()
-        .sort({ createdAt: -1 })
-        .limit(5)
-        .select('invoiceNumber customerName grandTotal paymentMethod createdAt saleStatus')
+      supabase
+        .from('sales')
+        .select('id, invoice_number, customer_name, grand_total, payment_method, created_at, sale_status')
+        .eq('owner_id', ownerId)
+        .order('created_at', { ascending: false })
+        .limit(5),
     ]);
 
-    const metrics = summaryFacet[0]?.productMetrics[0] || {
-      totalProducts: 0,
-      totalQuantity: 0,
-      totalInventoryValue: 0,
-      totalCostValue: 0,
-      lowStockCount: 0,
-      outOfStockCount: 0,
-      healthyStockCount: 0,
-      overstockedCount: 0
-    };
+    const products = productsRes.data || [];
+    let totalQuantity = 0;
+    let totalInventoryValue = 0;
+    let totalCostValue = 0;
+    let lowStockCount = 0;
+    let outOfStockCount = 0;
+    let healthyStockCount = 0;
+    let overstockedCount = 0;
+    const lowStockAlerts = [];
 
-    const todaySales = todaySalesFacet[0] || { todayRevenue: 0, todayOrdersCount: 0 };
+    for (const p of products) {
+      const qty = Number(p.quantity) || 0;
+      const price = Number(p.price) || 0;
+      const cost = Number(p.cost_price) || 0;
+      const min = Number(p.min_stock) || 5;
+      const max = Number(p.max_stock) || 100;
+
+      totalQuantity += qty;
+      totalInventoryValue += qty * price;
+      totalCostValue += qty * cost;
+
+      if (qty === 0) {
+        outOfStockCount++;
+      }
+      if (qty <= min) {
+        lowStockCount++;
+        lowStockAlerts.push({
+          _id: p.id,
+          id: p.id,
+          name: p.name,
+          sku: p.sku,
+          quantity: qty,
+          minStock: min,
+          price,
+          unit: p.unit,
+          categoryName: p.categories?.name || 'Uncategorized',
+        });
+      } else if (max > 0 && qty >= max) {
+        overstockedCount++;
+      } else {
+        healthyStockCount++;
+      }
+    }
+
+    lowStockAlerts.sort((a, b) => a.quantity - b.quantity);
+
+    const todaySales = todaySalesRes.data || [];
+    let todayRevenue = 0;
+    for (const s of todaySales) {
+      todayRevenue += Number(s.grand_total) || 0;
+    }
+
+    const recentMovements = (recentMovementsRes.data || []).map((m) => {
+      const formatted = formatRecord(m);
+      if (formatted.products) formatted.productId = formatRecord(formatted.products);
+      return formatted;
+    });
+
+    const recentSales = (recentSalesRes.data || []).map(formatSale);
 
     res.json({
       success: true,
       data: {
         summary: {
-          ...metrics,
-          potentialProfit: (metrics.totalInventoryValue - metrics.totalCostValue) || 0,
-          todayRevenue: todaySales.todayRevenue || 0,
-          todayOrdersCount: todaySales.todayOrdersCount || 0,
-          totalCategories,
-          totalSuppliers
+          totalProducts: products.length,
+          totalQuantity,
+          totalInventoryValue,
+          totalCostValue,
+          potentialProfit: totalInventoryValue - totalCostValue,
+          lowStockCount,
+          outOfStockCount,
+          healthyStockCount,
+          overstockedCount,
+          todayRevenue,
+          todayOrdersCount: todaySales.length,
+          totalCategories: categoriesCountRes.count || 0,
+          totalSuppliers: suppliersCountRes.count || 0,
         },
-        lowStockAlerts: summaryFacet[0]?.lowStockProducts || [],
+        lowStockAlerts: lowStockAlerts.slice(0, 5),
         recentMovements,
-        recentSales
-      }
+        recentSales,
+      },
     });
   } catch (error) {
     next(error);
@@ -154,78 +143,65 @@ const getDashboardSummary = async (req, res, next) => {
 };
 
 /**
- * @desc    Inventory Value & Stats by Category ($lookup, $unwind, $group, $project, $sort)
+ * @desc    Inventory Value & Stats by Category (Owner Scoped)
  * @route   GET /api/analytics/categories
+ * @access  Private
  */
 const getCategoryAnalytics = async (req, res, next) => {
   try {
-    const categoryStats = await Product.aggregate([
-      {
-        $lookup: {
-          from: 'categories',
-          localField: 'categoryId',
-          foreignField: '_id',
-          as: 'category'
-        }
-      },
-      { $unwind: '$category' },
-      {
-        $group: {
-          _id: '$category._id',
-          categoryName: { $first: '$category.name' },
-          categoryDescription: { $first: '$category.description' },
-          productCount: { $sum: 1 },
-          totalQuantity: { $sum: '$quantity' },
-          totalInventoryValue: { $sum: { $multiply: ['$quantity', '$price'] } },
-          totalCostValue: { $sum: { $multiply: ['$quantity', '$costPrice'] } },
-          lowStockCount: {
-            $sum: {
-              $cond: [{ $lte: ['$quantity', '$minStock'] }, 1, 0]
-            }
-          }
-        }
-      },
-      {
-        $project: {
-          _id: 1,
-          categoryName: 1,
-          categoryDescription: 1,
-          productCount: 1,
-          totalQuantity: 1,
-          totalInventoryValue: { $round: ['$totalInventoryValue', 2] },
-          totalCostValue: { $round: ['$totalCostValue', 2] },
-          profitMargin: {
-            $round: [
-              {
-                $cond: [
-                  { $gt: ['$totalInventoryValue', 0] },
-                  {
-                    $multiply: [
-                      {
-                        $divide: [
-                          { $subtract: ['$totalInventoryValue', '$totalCostValue'] },
-                          '$totalInventoryValue'
-                        ]
-                      },
-                      100
-                    ]
-                  },
-                  0
-                ]
-              },
-              1
-            ]
-          },
-          lowStockCount: 1
-        }
-      },
-      { $sort: { totalInventoryValue: -1 } }
-    ]);
+    const ownerId = req.user.id || req.user._id;
+
+    const { data: categories, error } = await supabase
+      .from('categories')
+      .select('id, name, description, products(id, quantity, price, cost_price, min_stock)')
+      .eq('owner_id', ownerId);
+
+    if (error) throw error;
+
+    const categoryStats = (categories || []).map((cat) => {
+      const prods = cat.products || [];
+      let totalQuantity = 0;
+      let totalInventoryValue = 0;
+      let totalCostValue = 0;
+      let lowStockCount = 0;
+
+      for (const p of prods) {
+        const qty = Number(p.quantity) || 0;
+        const price = Number(p.price) || 0;
+        const cost = Number(p.cost_price) || 0;
+        const min = Number(p.min_stock) || 5;
+
+        totalQuantity += qty;
+        totalInventoryValue += qty * price;
+        totalCostValue += qty * cost;
+        if (qty <= min) lowStockCount++;
+      }
+
+      let profitMargin = 0;
+      if (totalInventoryValue > 0) {
+        profitMargin = Math.round(((totalInventoryValue - totalCostValue) / totalInventoryValue) * 1000) / 10;
+      }
+
+      return {
+        _id: cat.id,
+        id: cat.id,
+        categoryName: cat.name,
+        categoryDescription: cat.description,
+        productCount: prods.length,
+        totalQuantity,
+        totalInventoryValue: Math.round(totalInventoryValue * 100) / 100,
+        totalCostValue: Math.round(totalCostValue * 100) / 100,
+        profitMargin,
+        lowStockCount,
+      };
+    });
+
+    categoryStats.sort((a, b) => b.totalInventoryValue - a.totalInventoryValue);
 
     res.json({
       success: true,
       count: categoryStats.length,
-      data: categoryStats
+      data: categoryStats,
     });
   } catch (error) {
     next(error);
@@ -233,58 +209,57 @@ const getCategoryAnalytics = async (req, res, next) => {
 };
 
 /**
- * @desc    Supplier Portfolio & Value Analysis ($lookup, $unwind, $group, $project, $sort)
+ * @desc    Supplier Portfolio & Value Analysis (Owner Scoped)
  * @route   GET /api/analytics/suppliers
+ * @access  Private
  */
 const getSupplierAnalytics = async (req, res, next) => {
   try {
-    const supplierStats = await Product.aggregate([
-      {
-        $lookup: {
-          from: 'suppliers',
-          localField: 'supplierId',
-          foreignField: '_id',
-          as: 'supplier'
-        }
-      },
-      { $unwind: '$supplier' },
-      {
-        $group: {
-          _id: '$supplier._id',
-          contactName: { $first: '$supplier.name' },
-          companyName: { $first: '$supplier.company' },
-          email: { $first: '$supplier.email' },
-          phone: { $first: '$supplier.phone' },
-          productCount: { $sum: 1 },
-          totalQuantity: { $sum: '$quantity' },
-          totalInventoryValue: { $sum: { $multiply: ['$quantity', '$price'] } },
-          lowStockCount: {
-            $sum: {
-              $cond: [{ $lte: ['$quantity', '$minStock'] }, 1, 0]
-            }
-          }
-        }
-      },
-      {
-        $project: {
-          _id: 1,
-          contactName: 1,
-          companyName: 1,
-          email: 1,
-          phone: 1,
-          productCount: 1,
-          totalQuantity: 1,
-          totalInventoryValue: { $round: ['$totalInventoryValue', 2] },
-          lowStockCount: 1
-        }
-      },
-      { $sort: { totalInventoryValue: -1 } }
-    ]);
+    const ownerId = req.user.id || req.user._id;
+
+    const { data: suppliers, error } = await supabase
+      .from('suppliers')
+      .select('id, name, company, email, phone, products(id, quantity, price, min_stock)')
+      .eq('owner_id', ownerId);
+
+    if (error) throw error;
+
+    const supplierStats = (suppliers || []).map((sup) => {
+      const prods = sup.products || [];
+      let totalQuantity = 0;
+      let totalInventoryValue = 0;
+      let lowStockCount = 0;
+
+      for (const p of prods) {
+        const qty = Number(p.quantity) || 0;
+        const price = Number(p.price) || 0;
+        const min = Number(p.min_stock) || 5;
+
+        totalQuantity += qty;
+        totalInventoryValue += qty * price;
+        if (qty <= min) lowStockCount++;
+      }
+
+      return {
+        _id: sup.id,
+        id: sup.id,
+        contactName: sup.name,
+        companyName: sup.company,
+        email: sup.email,
+        phone: sup.phone,
+        productCount: prods.length,
+        totalQuantity,
+        totalInventoryValue: Math.round(totalInventoryValue * 100) / 100,
+        lowStockCount,
+      };
+    });
+
+    supplierStats.sort((a, b) => b.totalInventoryValue - a.totalInventoryValue);
 
     res.json({
       success: true,
       count: supplierStats.length,
-      data: supplierStats
+      data: supplierStats,
     });
   } catch (error) {
     next(error);
@@ -292,67 +267,58 @@ const getSupplierAnalytics = async (req, res, next) => {
 };
 
 /**
- * @desc    Top Moving Products Ranking ($group, $sort, $limit, $lookup, $unwind)
+ * @desc    Top Moving Products Ranking (Owner Scoped)
  * @route   GET /api/analytics/top-products
+ * @access  Private
  */
 const getTopMovingProducts = async (req, res, next) => {
   try {
-    const topProducts = await StockMovement.aggregate([
-      {
-        $group: {
-          _id: '$productId',
-          totalMovedQuantity: { $sum: '$quantity' },
-          movementCount: { $sum: 1 },
-          outQuantity: {
-            $sum: { $cond: [{ $eq: ['$type', 'OUT'] }, '$quantity', 0] }
-          },
-          inQuantity: {
-            $sum: { $cond: [{ $eq: ['$type', 'IN'] }, '$quantity', 0] }
-          }
-        }
-      },
-      { $sort: { totalMovedQuantity: -1 } },
-      { $limit: 6 },
-      {
-        $lookup: {
-          from: 'products',
-          localField: '_id',
-          foreignField: 'productId', // wait, product._id
-          foreignField: '_id',
-          as: 'product'
-        }
-      },
-      { $unwind: '$product' },
-      {
-        $lookup: {
-          from: 'categories',
-          localField: 'product.categoryId',
-          foreignField: '_id',
-          as: 'category'
-        }
-      },
-      { $unwind: { path: '$category', preserveNullAndEmptyArrays: true } },
-      {
-        $project: {
-          _id: '$product._id',
-          name: '$product.name',
-          sku: '$product.sku',
-          price: '$product.price',
-          currentStock: '$product.quantity',
-          unit: '$product.unit',
-          categoryName: '$category.name',
-          totalMovedQuantity: 1,
-          movementCount: 1,
-          outQuantity: 1,
-          inQuantity: 1
-        }
+    const ownerId = req.user.id || req.user._id;
+
+    const { data: movements, error } = await supabase
+      .from('stock_movements')
+      .select('product_id, quantity, type, products:product_id(id, name, sku, price, quantity, unit, categories:category_id(name))')
+      .eq('owner_id', ownerId);
+
+    if (error) throw error;
+
+    const productMap = {};
+
+    for (const m of movements || []) {
+      if (!m.product_id || !m.products) continue;
+      const pid = m.product_id;
+      if (!productMap[pid]) {
+        productMap[pid] = {
+          _id: pid,
+          id: pid,
+          name: m.products.name,
+          sku: m.products.sku,
+          price: Number(m.products.price) || 0,
+          currentStock: Number(m.products.quantity) || 0,
+          unit: m.products.unit,
+          categoryName: m.products.categories?.name || 'Uncategorized',
+          totalMovedQuantity: 0,
+          movementCount: 0,
+          outQuantity: 0,
+          inQuantity: 0,
+        };
       }
-    ]);
+
+      const qty = Number(m.quantity) || 0;
+      productMap[pid].totalMovedQuantity += qty;
+      productMap[pid].movementCount += 1;
+      if (m.type === 'OUT') productMap[pid].outQuantity += qty;
+      if (m.type === 'IN') productMap[pid].inQuantity += qty;
+    }
+
+    const topProducts = Object.values(productMap)
+      .sort((a, b) => b.totalMovedQuantity - a.totalMovedQuantity)
+      .slice(0, 6);
 
     res.json({
       success: true,
       count: topProducts.length,
-      data: topProducts
+      data: topProducts,
     });
   } catch (error) {
     next(error);
@@ -360,56 +326,42 @@ const getTopMovingProducts = async (req, res, next) => {
 };
 
 /**
- * @desc    Low-Stock Products evaluated via MongoDB $expr ($match, $lookup, $sort)
+ * @desc    Low-Stock Products (Owner Scoped)
  * @route   GET /api/analytics/low-stock
+ * @access  Private
  */
 const getLowStockAnalytics = async (req, res, next) => {
   try {
-    const lowStockProducts = await Product.aggregate([
-      {
-        $match: {
-          $expr: { $lte: ['$quantity', '$minStock'] }
-        }
-      },
-      {
-        $lookup: {
-          from: 'categories',
-          localField: 'categoryId',
-          foreignField: '_id',
-          as: 'category'
-        }
-      },
-      { $unwind: '$category' },
-      {
-        $lookup: {
-          from: 'suppliers',
-          localField: 'supplierId',
-          foreignField: '_id',
-          as: 'supplier'
-        }
-      },
-      { $unwind: '$supplier' },
-      {
-        $project: {
-          _id: 1,
-          name: 1,
-          sku: 1,
-          price: 1,
-          quantity: 1,
-          minStock: 1,
-          unit: 1,
-          categoryName: '$category.name',
-          supplierCompany: '$supplier.company',
-          isOutOfStock: { $eq: ['$quantity', 0] }
-        }
-      },
-      { $sort: { quantity: 1 } }
-    ]);
+    const ownerId = req.user.id || req.user._id;
+
+    const { data: products, error } = await supabase
+      .from('products')
+      .select('id, name, sku, price, quantity, min_stock, unit, categories:category_id(name), suppliers:supplier_id(company)')
+      .eq('owner_id', ownerId);
+
+    if (error) throw error;
+
+    const lowStockProducts = (products || [])
+      .filter((p) => Number(p.quantity) <= Number(p.min_stock))
+      .map((p) => ({
+        _id: p.id,
+        id: p.id,
+        name: p.name,
+        sku: p.sku,
+        price: Number(p.price) || 0,
+        quantity: Number(p.quantity) || 0,
+        minStock: Number(p.min_stock) || 5,
+        unit: p.unit,
+        categoryName: p.categories?.name || 'Uncategorized',
+        supplierCompany: p.suppliers?.company || 'General Supplier',
+        isOutOfStock: Number(p.quantity) === 0,
+      }))
+      .sort((a, b) => a.quantity - b.quantity);
 
     res.json({
       success: true,
       count: lowStockProducts.length,
-      data: lowStockProducts
+      data: lowStockProducts,
     });
   } catch (error) {
     next(error);
@@ -417,28 +369,42 @@ const getLowStockAnalytics = async (req, res, next) => {
 };
 
 /**
- * @desc    Time Series Stock Movement Analytics ($match, $group, $sort)
+ * @desc    Time Series Stock Movement Analytics (Owner Scoped)
  * @route   GET /api/analytics/movements
+ * @access  Private
  */
 const getMovementAnalytics = async (req, res, next) => {
   try {
-    const movementTrends = await StockMovement.aggregate([
-      {
-        $group: {
-          _id: {
-            date: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
-            type: '$type'
-          },
-          totalQuantity: { $sum: '$quantity' },
-          count: { $sum: 1 }
-        }
-      },
-      { $sort: { '_id.date': 1 } }
-    ]);
+    const ownerId = req.user.id || req.user._id;
+
+    const { data: movements, error } = await supabase
+      .from('stock_movements')
+      .select('created_at, type, quantity')
+      .eq('owner_id', ownerId)
+      .order('created_at', { ascending: true });
+
+    if (error) throw error;
+
+    const trendMap = {};
+    for (const m of movements || []) {
+      const date = m.created_at ? m.created_at.split('T')[0] : 'Unknown';
+      const key = `${date}_${m.type}`;
+      if (!trendMap[key]) {
+        trendMap[key] = {
+          _id: { date, type: m.type },
+          totalQuantity: 0,
+          count: 0,
+        };
+      }
+      trendMap[key].totalQuantity += Number(m.quantity) || 0;
+      trendMap[key].count += 1;
+    }
+
+    const movementTrends = Object.values(trendMap);
 
     res.json({
       success: true,
-      data: movementTrends
+      data: movementTrends,
     });
   } catch (error) {
     next(error);
@@ -446,66 +412,68 @@ const getMovementAnalytics = async (req, res, next) => {
 };
 
 /**
- * @desc    Get Comprehensive Sales & Profit Analytics ($group, $project, $facet)
+ * @desc    Get Comprehensive Sales & Profit Analytics (Owner Scoped)
  * @route   GET /api/analytics/sales
+ * @access  Private
  */
 const getSalesAnalytics = async (req, res, next) => {
   try {
-    const salesFacet = await Sale.aggregate([
-      {
-        $facet: {
-          overallMetrics: [
-            { $match: { saleStatus: 'COMPLETED' } },
-            {
-              $group: {
-                _id: null,
-                totalRevenue: { $sum: '$grandTotal' },
-                totalSalesCount: { $sum: 1 },
-                totalDiscountsGiven: { $sum: '$discountAmount' },
-                totalTaxCollected: { $sum: '$taxAmount' }
-              }
-            }
-          ],
-          dailyRevenueTrends: [
-            { $match: { saleStatus: 'COMPLETED' } },
-            {
-              $group: {
-                _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
-                dailyRevenue: { $sum: '$grandTotal' },
-                orderCount: { $sum: 1 }
-              }
-            },
-            { $sort: { '_id': 1 } },
-            { $limit: 30 }
-          ],
-          paymentMethodBreakdown: [
-            { $match: { saleStatus: 'COMPLETED' } },
-            {
-              $group: {
-                _id: '$paymentMethod',
-                totalAmount: { $sum: '$grandTotal' },
-                count: { $sum: 1 }
-              }
-            }
-          ]
-        }
-      }
-    ]);
+    const ownerId = req.user.id || req.user._id;
 
-    const metrics = salesFacet[0]?.overallMetrics[0] || {
-      totalRevenue: 0,
-      totalSalesCount: 0,
-      totalDiscountsGiven: 0,
-      totalTaxCollected: 0
-    };
+    const { data: sales, error } = await supabase
+      .from('sales')
+      .select('grand_total, discount_amount, tax_amount, payment_method, created_at, sale_status')
+      .eq('owner_id', ownerId)
+      .eq('sale_status', 'COMPLETED')
+      .order('created_at', { ascending: true });
+
+    if (error) throw error;
+
+    let totalRevenue = 0;
+    let totalDiscountsGiven = 0;
+    let totalTaxCollected = 0;
+    const dailyMap = {};
+    const paymentMap = {};
+
+    for (const s of sales || []) {
+      const total = Number(s.grand_total) || 0;
+      const discount = Number(s.discount_amount) || 0;
+      const tax = Number(s.tax_amount) || 0;
+
+      totalRevenue += total;
+      totalDiscountsGiven += discount;
+      totalTaxCollected += tax;
+
+      const date = s.created_at ? s.created_at.split('T')[0] : 'Unknown';
+      if (!dailyMap[date]) {
+        dailyMap[date] = { _id: date, dailyRevenue: 0, orderCount: 0 };
+      }
+      dailyMap[date].dailyRevenue += total;
+      dailyMap[date].orderCount += 1;
+
+      const method = s.payment_method || 'CASH';
+      if (!paymentMap[method]) {
+        paymentMap[method] = { _id: method, totalAmount: 0, count: 0 };
+      }
+      paymentMap[method].totalAmount += total;
+      paymentMap[method].count += 1;
+    }
+
+    const dailyRevenueTrends = Object.values(dailyMap).slice(-30);
+    const paymentMethodBreakdown = Object.values(paymentMap);
 
     res.json({
       success: true,
       data: {
-        summary: metrics,
-        dailyRevenueTrends: salesFacet[0]?.dailyRevenueTrends || [],
-        paymentMethodBreakdown: salesFacet[0]?.paymentMethodBreakdown || []
-      }
+        summary: {
+          totalRevenue,
+          totalSalesCount: (sales || []).length,
+          totalDiscountsGiven,
+          totalTaxCollected,
+        },
+        dailyRevenueTrends,
+        paymentMethodBreakdown,
+      },
     });
   } catch (error) {
     next(error);
@@ -519,5 +487,5 @@ module.exports = {
   getTopMovingProducts,
   getLowStockAnalytics,
   getMovementAnalytics,
-  getSalesAnalytics
+  getSalesAnalytics,
 };

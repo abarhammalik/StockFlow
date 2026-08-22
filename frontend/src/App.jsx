@@ -1,5 +1,11 @@
 import React, { useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
+import { AuthProvider } from './context/AuthContext';
+import ProtectedRoute from './components/auth/ProtectedRoute';
+import LandingPage from './pages/LandingPage';
+import Login from './pages/Login';
+import Signup from './pages/Signup';
+
 import Sidebar from './components/layout/Sidebar';
 import Header from './components/layout/Header';
 import Dashboard from './pages/Dashboard';
@@ -21,7 +27,7 @@ import RecordStockModal from './components/stock/RecordStockModal';
 import ToastContainer from './components/ui/ToastContainer';
 import GlobalSearchModal from './components/layout/GlobalSearchModal';
 
-function AppContent() {
+function ApplicationLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [selectedProductId, setSelectedProductId] = useState(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -36,34 +42,34 @@ function AppContent() {
 
   const getPageTitle = () => {
     switch (location.pathname) {
-      case '/':
+      case '/app':
         return { title: 'Inventory Dashboard', subtitle: 'Real-time overview of inventory value, stock levels, and movements' };
-      case '/billing':
+      case '/app/billing':
         return { title: 'Point of Sale & Billing (POS)', subtitle: 'Create customer bills, generate invoices, and deduct stock live' };
-      case '/sales':
+      case '/app/sales':
         return { title: 'Sales & Invoices History', subtitle: 'Complete transaction history and printable customer receipts' };
-      case '/sales-analytics':
+      case '/app/sales-analytics':
         return { title: 'Sales Analytics & Revenue Reports', subtitle: 'Server-side aggregated revenue metrics and P&L breakdown' };
-      case '/customers':
+      case '/app/customers':
         return { title: 'Customers Directory', subtitle: 'Customer database with purchase history and spending metrics' };
-      case '/products':
+      case '/app/products':
         return { title: 'Product Inventory Catalog', subtitle: 'Search, filter, and manage SKU items' };
-      case '/categories':
+      case '/app/categories':
         return { title: 'Categories & Aggregations', subtitle: 'Organize stock categories and aggregated catalog valuation' };
-      case '/suppliers':
+      case '/app/suppliers':
         return { title: 'Suppliers Directory', subtitle: 'Vendor contacts and inventory portfolio breakdown' };
-      case '/purchase-orders':
+      case '/app/purchase-orders':
         return { title: 'Supplier Purchase Orders (PO)', subtitle: 'Manage POs and auto-restock inventory upon receipt' };
-      case '/stock-movements':
+      case '/app/stock-movements':
         return { title: 'Stock Movement Ledger', subtitle: 'Immutable transaction ledger of receipts, dispatches, and sales' };
-      case '/analytics':
-        return { title: 'MongoDB Aggregation Showcase', subtitle: 'Server-side aggregation pipelines and query operators' };
-      case '/audit-logs':
+      case '/app/analytics':
+        return { title: 'Analytics & Insights Showcase', subtitle: 'Server-side aggregation metrics and real-time query insights' };
+      case '/app/audit-logs':
         return { title: 'System Activity Logs', subtitle: 'Immutable trail of system operations and sales' };
-      case '/settings':
-        return { title: 'Database Settings & Demo Tools', subtitle: 'Local MongoDB status and 1-Click demo dataset tools' };
+      case '/app/settings':
+        return { title: 'Cloud Settings & Profile', subtitle: 'Supabase PostgreSQL configuration, security, and profile tools' };
       default:
-        return { title: 'StockFlow SaaS', subtitle: 'Inventory & Billing Platform' };
+        return { title: 'StockFlow Cloud SaaS', subtitle: 'Inventory & Billing Platform' };
     }
   };
 
@@ -128,6 +134,7 @@ function AppContent() {
               <Route path="/analytics" element={<Analytics />} />
               <Route path="/audit-logs" element={<AuditLogs />} />
               <Route path="/settings" element={<Settings />} />
+              <Route path="*" element={<Navigate to="/app" replace />} />
             </Routes>
           )}
         </main>
@@ -148,7 +155,7 @@ function AppContent() {
         onClose={() => setIsAddProductOpen(false)}
         onSuccess={() => {
           setIsAddProductOpen(false);
-          navigate('/products');
+          navigate('/app/products');
         }}
       />
 
@@ -168,7 +175,27 @@ function AppContent() {
 export default function App() {
   return (
     <Router>
-      <AppContent />
+      <AuthProvider>
+        <Routes>
+          {/* Public SaaS Routes */}
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/signup" element={<Signup />} />
+
+          {/* Protected Application Workspace Routes */}
+          <Route
+            path="/app/*"
+            element={
+              <ProtectedRoute>
+                <ApplicationLayout />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Fallback Route */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </AuthProvider>
     </Router>
   );
 }

@@ -60,7 +60,7 @@ export default function PurchaseConfirmModal({
         </div>
 
         <p className="text-[11px] text-slate-400 text-center">
-          * Clicking 'Yes, Process Purchase' will atomically deduct stock in MongoDB & issue tax receipt.
+          * Clicking 'Yes, Process Purchase' will atomically deduct stock & issue tax receipt.
         </p>
 
         {/* Modal Buttons */}
